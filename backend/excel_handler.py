@@ -25,7 +25,7 @@ def create_sample_excel_if_not_exists(filepath: str = DEFAULT_EXCEL_PATH) -> str
 
     df = pd.DataFrame(sample_data)
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="PRODUCTOS A INCLUIR", startrow=3, index=False)
+        df.to_excel(writer, sheet_name="PRODUCTOS A INCLUIR", index=False)
 
     return filepath
 
@@ -43,7 +43,9 @@ def read_inventory_excel(file_source: Any) -> Tuple[List[Dict[str, Any]], str]:
         # 1. Priorizar la hoja 'PRODUCTOS A INCLUIR' si existe
         df_prod = pd.DataFrame()
         if 'PRODUCTOS A INCLUIR' in xl.sheet_names:
-            df_prod = pd.read_excel(xl, sheet_name='PRODUCTOS A INCLUIR', header=3)
+            df_prod = pd.read_excel(xl, sheet_name='PRODUCTOS A INCLUIR')
+            if 'CODIGO' not in df_prod.columns:
+                df_prod = pd.read_excel(xl, sheet_name='PRODUCTOS A INCLUIR', header=3)
 
         # 2. Leer la hoja 'DATA VENTAS'
         df_ventas = pd.DataFrame()

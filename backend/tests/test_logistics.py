@@ -109,9 +109,19 @@ def test_logistics_fastapi_endpoints():
     assert res_layout.status_code == 200
     assert len(res_layout.json()["locations"]) == 60
 
+    # Retrieve available reference SKU from initial inventory or example layout
+    from backend.main import picking_engine
+    sample_sku = list(picking_engine.inventory.keys())[0]
+
     # Optimize pick endpoint
     res_pick = client.post("/api/picking/optimize-pick", json={
-        "requested_items": [{"sku": "SKU-1001", "quantity": 2}]
+        "requested_items": [{"sku": sample_sku, "quantity": 1}]
     })
     assert res_pick.status_code == 200
-    assert res_pick.json()["success"] is True
+    json_pick = res_pick.json()
+    assert json_pick["success"] is True
+    assert "route_waypoints" in json_pick
+    waypoints = json_pick["route_waypoints"]
+    assert len(waypoints) >= 3
+    assert waypoints[0]["audio_tag"] == "start"
+    assert waypoints[-1]["audio_tag"] == "end"
