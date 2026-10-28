@@ -26,12 +26,19 @@ export default function SmartPicking({ masterReferences = [] }) {
   const [blockedAisles, setBlockedAisles] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState(null);
 
+  // Fallback references if masterReferences is empty
+  const availableReferences = masterReferences.length > 0 ? masterReferences : [
+    { sku: '200040', description: 'Slot nut IPM-VN-05-12/M5-ST', stock: 100 },
+    { sku: '300026', description: 'Solenoid coil MSFG-24/42-50/60', stock: 150 },
+    { sku: '300027', description: 'Solenoid coil MSFW-110-50/60', stock: 200 }
+  ];
+
   // Pick List Request State
   const [requestItems, setRequestItems] = useState([
-    { sku: masterReferences[0]?.sku || 'SKU-1001', quantity: 2 },
-    { sku: masterReferences[1]?.sku || 'SKU-1002', quantity: 5 }
+    { sku: availableReferences[0]?.sku || '200040', quantity: 2 },
+    { sku: availableReferences[1]?.sku || '300026', quantity: 5 }
   ]);
-  const [selectedSku, setSelectedSku] = useState(masterReferences[0]?.sku || '');
+  const [selectedSku, setSelectedSku] = useState(availableReferences[0]?.sku || '');
   const [selectedQty, setSelectedQty] = useState(1);
 
   // Pick Optimization Result State
@@ -48,6 +55,12 @@ export default function SmartPicking({ masterReferences = [] }) {
   useEffect(() => {
     fetchExampleLayout();
   }, []);
+
+  useEffect(() => {
+    if (availableReferences.length > 0 && !selectedSku) {
+      setSelectedSku(availableReferences[0].sku);
+    }
+  }, [availableReferences]);
 
   const fetchExampleLayout = async () => {
     setLoading(true);
@@ -153,7 +166,6 @@ export default function SmartPicking({ masterReferences = [] }) {
   // Save Custom Layout
   const handleSaveCustomLayout = async () => {
     setLoading(true);
-    // Build custom layout payload
     const customLocations = {};
     for (let i = 1; i <= customLocationsCount; i++) {
       const aisleNum = ((i - 1) % customAislesCount) + 1;
@@ -176,7 +188,7 @@ export default function SmartPicking({ masterReferences = [] }) {
     const customPayload = {
       layout_id: `CUSTOM_${Date.now()}`,
       name: customLayoutName,
-      is_custom: True,
+      is_custom: true,
       total_locations: customLocationsCount,
       aisles_count: customAislesCount,
       locations: customLocations
@@ -200,7 +212,6 @@ export default function SmartPicking({ masterReferences = [] }) {
     }
   };
 
-  // Calculate picked progress
   const totalItems = pickingResult?.dispatch_list?.length || 0;
   const pickedCount = pickingResult?.dispatch_list?.filter((i) => i.picked).length || 0;
   const progressPct = totalItems > 0 ? Math.round((pickedCount / totalItems) * 100) : 0;
@@ -223,7 +234,7 @@ export default function SmartPicking({ masterReferences = [] }) {
           </div>
         </div>
 
-        {/* 2 MAIN BUTTONS REQUIRED BY SPEC */}
+        {/* 2 MAIN BUTTONS */}
         <div className="flex items-center p-1.5 bg-slate-900/90 rounded-2xl border border-slate-700/80">
           <button
             onClick={() => {
@@ -315,19 +326,19 @@ export default function SmartPicking({ masterReferences = [] }) {
           Generador de Solicitud de Picking
         </h3>
 
-        {/* Input Selector Row */}
+        {/* Input Selector Row with Fixed Styling */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
           <div className="md:col-span-2">
             <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-              Seleccionar SKU de Inventario Maestro
+              Seleccionar SKU de Inventario Maestro ({availableReferences.length} disponibles)
             </label>
             <select
               value={selectedSku}
               onChange={(e) => setSelectedSku(e.target.value)}
-              className="w-full text-xs font-bold text-white bg-slate-900 p-3 rounded-xl border border-slate-700 focus:border-blue-500 outline-none"
+              className="w-full text-xs font-bold text-white bg-slate-900 p-3 rounded-xl border border-slate-700 focus:border-blue-500 outline-none cursor-pointer"
             >
-              {masterReferences.map((ref) => (
-                <option key={ref.sku} value={ref.sku}>
+              {availableReferences.map((ref) => (
+                <option key={ref.sku} value={ref.sku} className="bg-slate-900 text-white py-2">
                   {ref.sku} — {ref.description} (Stock: {ref.stock})
                 </option>
               ))}
@@ -402,10 +413,9 @@ export default function SmartPicking({ masterReferences = [] }) {
         </div>
       )}
 
-      {/* OPTIMIZED PICKING RESULTS & COMPARISON */}
+      {/* OPTIMIZED PICKING RESULTS */}
       {pickingResult && pickingResult.dispatch_list && (
         <div className="space-y-6">
-          {/* Distance Comparison Metric Card */}
           <div className="bg-slate-800 border border-slate-700/80 p-6 rounded-3xl shadow-xl space-y-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-700/60 pb-4">
               <div>
@@ -433,7 +443,6 @@ export default function SmartPicking({ masterReferences = [] }) {
                 <span className="text-2xl font-black text-slate-300">
                   {pickingResult.distance_comparison.original_sequence_distance_m} metros
                 </span>
-                <p className="text-[11px] text-slate-400 mt-1">Secuencia sin optimizar</p>
               </div>
 
               <div className="bg-slate-900/60 p-4 rounded-2xl border border-blue-500/40">
@@ -441,7 +450,6 @@ export default function SmartPicking({ masterReferences = [] }) {
                 <span className="text-2xl font-black text-emerald-400">
                   {pickingResult.distance_comparison.optimized_sequence_distance_m} metros
                 </span>
-                <p className="text-[11px] text-emerald-300 mt-1">S-Shape por pasillos</p>
               </div>
 
               <div className="bg-emerald-950/40 p-4 rounded-2xl border border-emerald-500/40">
@@ -449,14 +457,7 @@ export default function SmartPicking({ masterReferences = [] }) {
                 <span className="text-2xl font-black text-white">
                   {pickingResult.distance_comparison.distance_saved_m} metros
                 </span>
-                <p className="text-[11px] text-slate-300 mt-1">Reducción efectiva de caminata</p>
               </div>
-            </div>
-
-            {/* Methodology Disclaimer Notice */}
-            <div className="p-3 bg-slate-900/80 rounded-2xl border border-slate-700/80 text-[11px] text-slate-400 flex items-center gap-2">
-              <Info className="w-4 h-4 text-blue-400 flex-shrink-0" />
-              <span>{pickingResult.distance_comparison.methodology_disclaimer}</span>
             </div>
           </div>
 
@@ -470,7 +471,6 @@ export default function SmartPicking({ masterReferences = [] }) {
                 </p>
               </div>
 
-              {/* Progress bar */}
               <div className="w-48 bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-700">
                 <div
                   className="bg-emerald-500 h-full transition-all duration-300"
