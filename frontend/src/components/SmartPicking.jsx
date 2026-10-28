@@ -12,7 +12,6 @@ import {
   Sparkles,
   Edit3,
   Cpu,
-  Activity,
   Zap,
   Radio,
   ArrowUp,
@@ -20,7 +19,12 @@ import {
   ArrowLeft,
   ArrowRight,
   RotateCcw,
-  ShieldAlert
+  ShieldAlert,
+  Trash2,
+  ArrowUpRight,
+  Navigation,
+  MapPin,
+  RefreshCw
 } from 'lucide-react';
 
 import WarehouseCanvas from './WarehouseCanvas';
@@ -29,29 +33,18 @@ import { SoundEffects } from '../utils/soundEffects';
 
 const API_BASE_URL = 'http://localhost:8000';
 
-export default function SmartPicking({ masterReferences = [] }) {
+export default function SmartPicking() {
   const [activeLayoutMode, setActiveLayoutMode] = useState('example');
   const [layoutData, setLayoutData] = useState(null);
   const [blockedAisles, setBlockedAisles] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState(null);
 
-  // Available inventory references
-  const availableReferences = masterReferences.length > 0 ? masterReferences : [
-    { sku: '200040', description: 'Slot nut IPM-VN-05-12/M5-ST', stock: 100 },
-    { sku: '300026', description: 'Solenoid coil MSFG-24/42-50/60', stock: 150 },
-    { sku: '300027', description: 'Solenoid coil MSFW-110-50/60', stock: 200 }
-  ];
+  // Pre-loaded Manual Rack List (No SKUs, only direct layout racks/coordinates)
+  const [rackSequence, setRackSequence] = useState([4, 7, 21, 25, 41, 44, 49, 55, 60]);
+  const [newLocationInput, setNewLocationInput] = useState(1);
 
-  // Pick List Request State
-  const [requestItems, setRequestItems] = useState([
-    { sku: availableReferences[0]?.sku || '200040', quantity: 2 },
-    { sku: availableReferences[1]?.sku || '300026', quantity: 5 }
-  ]);
-  const [selectedSku, setSelectedSku] = useState(availableReferences[0]?.sku || '');
-  const [selectedQty, setSelectedQty] = useState(1);
-
-  // Optimization Result State
-  const [pickingResult, setPickingResult] = useState(null);
+  // Calculated Route Results
+  const [routeResult, setRouteResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -63,10 +56,10 @@ export default function SmartPicking({ masterReferences = [] }) {
   // Sound Toggle State
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  // Log Terminal State
+  // Live Log Terminal State
   const [logs, setLogs] = useState([]);
 
-  // AGV Simulation & Real-Time Telemetry State
+  // AGV Simulation & Telemetry State
   const [controlMode, setControlMode] = useState('auto'); // 'auto' | 'manual'
   const [agvState, setAgvState] = useState({
     x: 2,
@@ -88,17 +81,11 @@ export default function SmartPicking({ masterReferences = [] }) {
     setLogs((prev) => [...prev, { timestamp, message, type }]);
   };
 
-  // Fetch initial example layout
+  // Initial setup: Fetch layout & default rack route
   useEffect(() => {
     fetchExampleLayout();
-    addLog('Sistema WMS Logística 2026 inicializado. Carro AGV posicionado en Zona Inferior de Entrada (x:2, y:0).', 'INFO');
+    addLog('Sistema WMS Logística 2026 inicializado. Carro AGV preparado en Zona Inferior de Entrada/Despacho (x:2, y:0).', 'INFO');
   }, []);
-
-  useEffect(() => {
-    if (availableReferences.length > 0 && !selectedSku) {
-      setSelectedSku(availableReferences[0].sku);
-    }
-  }, [availableReferences]);
 
   const fetchExampleLayout = async () => {
     setLoading(true);
@@ -115,6 +102,45 @@ export default function SmartPicking({ masterReferences = [] }) {
     }
   };
 
+  // Fetch or calculate route when rack sequence or blocked aisles change
+  const handleCalculateRoute = async (sequenceToUse = rackSequence) => {
+    if (!sequenceToUse || sequenceToUse.length === 0) {
+      setRouteResult(null);
+      return;
+    }
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/picking/manual-route`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location_numbers: sequenceToUse,
+          layout_id: activeLayoutMode === 'example' ? 'EXAMPLE_HACKATHON_2026' : 'CUSTOM_LAYOUT',
+          blocked_aisles: blockedAisles
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRouteResult(data);
+        addLog(`Ruta de racks optimizada calculada. Total paradas: ${data.total_stops}. Recorrido total: ${data.distance_comparison.optimized_sequence_distance_m}m.`, 'SUCCESS');
+      } else {
+        const msg = data.message || data.detail?.message || 'Error al calcular la ruta manual.';
+        setErrorMsg(msg);
+        addLog(`Error al calcular ruta: ${msg}`, 'ERROR');
+      }
+    } catch (err) {
+      setErrorMsg('Error de conexión con la API de rutas.');
+      addLog('Error al conectar con la API FastAPI.', 'ERROR');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    handleCalculateRoute(rackSequence);
+  }, [rackSequence, blockedAisles, activeLayoutMode]);
+
   // Toggle Aisle Block
   const handleToggleBlockAisle = (aisleName) => {
     setBlockedAisles((prev) => {
@@ -125,83 +151,65 @@ export default function SmartPicking({ masterReferences = [] }) {
     });
   };
 
-  // Add SKU to request items
-  const handleAddSkuToRequest = () => {
-    if (!selectedSku) return;
-    const existingIdx = requestItems.findIndex((item) => item.sku === selectedSku);
-    if (existingIdx >= 0) {
-      const updated = [...requestItems];
-      updated[existingIdx].quantity += Number(selectedQty);
-      setRequestItems(updated);
-    } else {
-      setRequestItems([...requestItems, { sku: selectedSku, quantity: Number(selectedQty) }]);
-    }
-    addLog(`SKU '${selectedSku}' x${selectedQty} agregado a la lista de solicitud.`, 'ACTION');
-  };
-
-  const handleRemoveRequestItem = (skuToRemove) => {
-    setRequestItems(requestItems.filter((item) => item.sku !== skuToRemove));
-    addLog(`SKU '${skuToRemove}' eliminado de la solicitud.`, 'INFO');
-  };
-
-  // Run Pick Optimization
-  const handleGeneratePicking = async () => {
-    setLoading(true);
-    setErrorMsg(null);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/picking/optimize-pick`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requested_items: requestItems,
-          layout_id: activeLayoutMode === 'example' ? 'EXAMPLE_HACKATHON_2026' : 'CUSTOM_LAYOUT',
-          blocked_aisles: blockedAisles
-        })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setPickingResult(data);
-        addLog(`Ruta de picking optimizada generada. Total ítems: ${data.total_items}. Ahorro estimado: ${data.distance_comparison.distance_saved_m}m.`, 'SUCCESS');
-      } else {
-        const msg = data.message || data.detail?.message || 'Error al generar la lista de despacho.';
-        setErrorMsg(msg);
-        addLog(`Error al generar ruta: ${msg}`, 'ERROR');
-      }
-    } catch (err) {
-      setErrorMsg('Error de conexión con la API de picking inteligente.');
-      addLog('Error de conexión con la API FastAPI de picking.', 'ERROR');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Start Realtime AGV Automatic Route Animation Loop
-  const handleStartRouteAnimation = () => {
-    if (!pickingResult || !pickingResult.route_waypoints || pickingResult.route_waypoints.length === 0) {
-      addLog('Genera primero una lista de despacho para iniciar la simulación animada.', 'WARN');
+  // Editing methods for Manual Control Panel
+  const handleAddLocationToSequence = () => {
+    const locNum = Number(newLocationInput);
+    if (!locNum || locNum < 1 || locNum > (layoutData?.total_locations || 60)) {
+      addLog(`Número de ubicación invalido: #${newLocationInput}`, 'WARN');
       return;
+    }
+    setRackSequence((prev) => [...prev, locNum]);
+    addLog(`Ubicación #${locNum} agregada al panel de control de ruta.`, 'ACTION');
+  };
+
+  const handleRemoveLocationFromSequence = (indexToRemove) => {
+    setRackSequence((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+    addLog(`Parada #${indexToRemove + 1} eliminada de la lista de ruta.`, 'INFO');
+  };
+
+  const handleMoveLocationInSequence = (index, direction) => {
+    const newSeq = [...rackSequence];
+    const targetIdx = index + direction;
+    if (targetIdx < 0 || targetIdx >= newSeq.length) return;
+    const temp = newSeq[index];
+    newSeq[index] = newSeq[targetIdx];
+    newSeq[targetIdx] = temp;
+    setRackSequence(newSeq);
+    addLog(`Secuencia de paradas actualizada (${index + 1} ↔ ${targetIdx + 1}).`, 'INFO');
+  };
+
+  const handleResetToDefaultSequence = () => {
+    const defaultSeq = [4, 7, 21, 25, 41, 44, 49, 55, 60];
+    setRackSequence(defaultSeq);
+    addLog('Secuencia de ruta restablecida a los Racks por defecto con sus niveles de prioridad (Amarillo, Naranja, Rojo).', 'INFO');
+  };
+
+  // Start Realtime AGV Route Animation Loop
+  const handleStartRouteAnimation = async () => {
+    if (!routeResult || !routeResult.route_waypoints || routeResult.route_waypoints.length === 0) {
+      await handleCalculateRoute();
     }
 
     if (isSimulating) {
-      // Stop current simulation
       if (simulationTimerRef.current) clearTimeout(simulationTimerRef.current);
       setIsSimulating(false);
       setAgvState((prev) => ({ ...prev, status: 'IDLE' }));
-      addLog('Simulación animada cancelada por el operador.', 'WARN');
+      addLog('Simulación animada detenida por el operador.', 'WARN');
       return;
     }
 
-    const waypoints = pickingResult.route_waypoints;
+    const waypoints = routeResult?.route_waypoints || [];
+    if (waypoints.length === 0) {
+      addLog('No hay waypoints de ruta disponibles.', 'WARN');
+      return;
+    }
+
     setIsSimulating(true);
-
     if (soundEnabled) SoundEffects.playStart();
-    addLog('🚀 INICIO DE RUTA AUTOMÁTICA AGV. Vehículo partiendo de Zona Inferior de Despacho (x:2, y:0).', 'ACTION');
-
-    let currentIdx = 0;
+    addLog('🚀 INICIO DE RECORRIDO INTERACTIVO AGV. Partiendo desde Zona Inferior de Entrada / Despacho (x:2, y:0).', 'ACTION');
 
     const runWaypointStep = (idx) => {
       if (idx >= waypoints.length) {
-        // Route Completed
         setAgvState((prev) => ({
           ...prev,
           x: 2,
@@ -211,14 +219,12 @@ export default function SmartPicking({ masterReferences = [] }) {
         }));
         setIsSimulating(false);
         if (soundEnabled) SoundEffects.playComplete();
-        addLog('🏁 RUTA COMPLETADA EXITOSAMENTE. Vehículo AGV retornado a Zona Inferior de Despacho.', 'SUCCESS');
+        addLog('🏁 RECORRIDO COMPLETADO EXITOSAMENTE. Vehículo AGV retornado a Zona Inferior de Entrada/Despacho.', 'SUCCESS');
         return;
       }
 
       const wp = waypoints[idx];
-      currentIdx = idx;
 
-      // Update AGV Position & Moving state
       setAgvState((prev) => ({
         ...prev,
         x: wp.x,
@@ -231,39 +237,35 @@ export default function SmartPicking({ masterReferences = [] }) {
 
       if (wp.type === 'START') {
         addLog(`Punto 0: Salida desde ${wp.zone}`, 'INFO');
-        simulationTimerRef.current = setTimeout(() => runWaypointStep(idx + 1), 1000);
+        simulationTimerRef.current = setTimeout(() => runWaypointStep(idx + 1), 900);
       } else if (wp.type === 'PICK') {
-        addLog(`🛑 PARADA #${wp.step}: Llegada a Ubicación #${wp.location} (${wp.aisle}, ${wp.rack}). ${wp.label}.`, 'ACTION');
-        addLog(`⏱️ Estado Estático: Ejecutando tiempo de recogida en ${wp.color.toUpperCase()} (${wp.dwell_time_ms}ms)...`, 'INFO');
+        addLog(`🛑 PARADA #${wp.step}: Llegada a ${wp.label} (${wp.aisle}). Operación de recogida en nivel de prioridad...`, 'ACTION');
 
-        // Play zone-specific sound effect
         if (soundEnabled) {
-          if (wp.color === 'orange') SoundEffects.playArrivalOrange();
-          else if (wp.color === 'red') SoundEffects.playArrivalRed();
-          else if (wp.color === 'yellow') SoundEffects.playArrivalYellow();
-          else SoundEffects.playArrivalStandard();
+          SoundEffects.playArrivalForColor(wp.color);
         }
 
-        // Auto-check picked item in list table
-        const matchingItemIdx = pickingResult.dispatch_list.findIndex((i) => String(i.location_number) === String(wp.location));
-        if (matchingItemIdx >= 0) {
-          const updatedList = [...pickingResult.dispatch_list];
-          updatedList[matchingItemIdx].picked = true;
-          setPickingResult((prev) => ({ ...prev, dispatch_list: updatedList }));
-          addLog(`📦 Ítem SKU ${wp.sku} recolectado correctamente en Nivel ${wp.chosen_level}.`, 'SUCCESS');
+        // Auto mark stop as processed in UI list
+        if (routeResult && routeResult.route_list) {
+          const updatedList = [...routeResult.route_list];
+          const matchIdx = updatedList.findIndex((i) => i.location_number === wp.location);
+          if (matchIdx >= 0) {
+            updatedList[matchIdx].visited = true;
+            setRouteResult((prev) => ({ ...prev, route_list: updatedList }));
+          }
         }
 
         simulationTimerRef.current = setTimeout(() => runWaypointStep(idx + 1), wp.dwell_time_ms || 1200);
       } else if (wp.type === 'END') {
-        addLog(`Retornando a Despacho Inferior...`, 'INFO');
-        simulationTimerRef.current = setTimeout(() => runWaypointStep(idx + 1), 1000);
+        addLog(`Retornando a Punto de Partida / Despacho Inferior...`, 'INFO');
+        simulationTimerRef.current = setTimeout(() => runWaypointStep(idx + 1), 900);
       }
     };
 
     runWaypointStep(0);
   };
 
-  // Manual Control Handler (D-Pad Navigation)
+  // Manual D-Pad Movement
   const handleManualMove = (dx, dy, dirName) => {
     if (controlMode !== 'manual') return;
 
@@ -282,13 +284,11 @@ export default function SmartPicking({ masterReferences = [] }) {
     addLog(`Control Manual AGV: Movimiento ${dirName} a posición (x:${newX}, y:${newY}).`, 'MANUAL');
   };
 
-  // Manual Pick Action
   const handleManualPickAction = () => {
     if (soundEnabled) SoundEffects.playArrivalYellow();
-    addLog(`Recogida manual ejecutada en posición actual (x:${agvState.x}, y:${agvState.y}).`, 'SUCCESS');
+    addLog(`Acción de recogida manual ejecutada en coordenadas (x:${agvState.x}, y:${agvState.y}).`, 'SUCCESS');
   };
 
-  // Emergency Stop Handler
   const handleEmergencyStop = () => {
     if (simulationTimerRef.current) clearTimeout(simulationTimerRef.current);
     setIsSimulating(false);
@@ -297,7 +297,6 @@ export default function SmartPicking({ masterReferences = [] }) {
     addLog('🚨 PARADA DE EMERGENCIA ACTIVADA POR EL OPERADOR.', 'ERROR');
   };
 
-  // Reset AGV Position
   const handleResetAGV = () => {
     if (simulationTimerRef.current) clearTimeout(simulationTimerRef.current);
     setIsSimulating(false);
@@ -311,7 +310,7 @@ export default function SmartPicking({ masterReferences = [] }) {
       currentWaypointIdx: 0,
       location: null
     });
-    addLog('AGV reiniciado a posición por defecto: Zona Inferior (x:2, y:0). Batería 100%.', 'INFO');
+    addLog('AGV reiniciado a posición por defecto: Zona Inferior de Entrada/Despacho (x:2, y:0). Batería 100%.', 'INFO');
   };
 
   // Save Custom Layout
@@ -364,33 +363,6 @@ export default function SmartPicking({ masterReferences = [] }) {
     }
   };
 
-  // Export CSV
-  const handleExportCSV = async () => {
-    if (!pickingResult || !pickingResult.dispatch_list) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/picking/export-csv`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dispatch_list: pickingResult.dispatch_list })
-      });
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'lista_de_despacho_ordenada.csv';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      addLog('Lista de despacho exportada a CSV.', 'ACTION');
-    } catch (err) {
-      console.error('Error al exportar CSV:', err);
-    }
-  };
-
-  const totalItems = pickingResult?.dispatch_list?.length || 0;
-  const pickedCount = pickingResult?.dispatch_list?.filter((i) => i.picked).length || 0;
-  const progressPct = totalItems > 0 ? Math.round((pickedCount / totalItems) * 100) : 0;
-
   return (
     <div className="space-y-6">
       {/* Header Banner */}
@@ -401,9 +373,9 @@ export default function SmartPicking({ masterReferences = [] }) {
               <Boxes className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-xl font-black text-white">Picking Inteligente & Vehículo AGV — WMS 2026</h2>
+              <h2 className="text-xl font-black text-white">Panel de Control & Simulación AGV — WMS 2026</h2>
               <p className="text-xs text-slate-400">
-                Simulación interactiva en tiempo real del vehículo autónomo (Arduino/AGV) con trazado dinámico y audio.
+                Simulación interactiva completa de un carro autónomo (AGV) sobre coordenadas de racks y niveles de prioridad.
               </p>
             </div>
           </div>
@@ -494,7 +466,7 @@ export default function SmartPicking({ masterReferences = [] }) {
               onClick={() => {
                 setControlMode('auto');
                 setAgvState((prev) => ({ ...prev, mode: 'auto' }));
-                addLog('Modo de Control cambiado a AUTOMÁTICO.', 'INFO');
+                addLog('Modo de Control cambiado a AUTOMÁTICO (Siguiente Ruta Precargada).', 'INFO');
               }}
               className={`px-3 py-1.5 rounded-xl font-black text-xs transition-all ${
                 controlMode === 'auto'
@@ -523,7 +495,7 @@ export default function SmartPicking({ masterReferences = [] }) {
           {/* Real-time Telemetry Pills */}
           <div className="flex items-center space-x-2 bg-slate-900/90 px-3 py-2 rounded-2xl border border-slate-700">
             <Cpu className="w-4 h-4 text-blue-400" />
-            <span className="text-slate-400 font-bold">Estado:</span>
+            <span className="text-slate-400 font-bold">Estado AGV:</span>
             <span className="font-black text-white">{agvState.status}</span>
           </div>
 
@@ -545,15 +517,15 @@ export default function SmartPicking({ masterReferences = [] }) {
           {controlMode === 'auto' ? (
             <button
               onClick={handleStartRouteAnimation}
-              disabled={!pickingResult}
-              className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 shadow-lg disabled:opacity-40 ${
+              disabled={loading}
+              className={`px-6 py-3 rounded-xl text-xs font-black transition-all flex items-center gap-2 shadow-lg ${
                 isSimulating
                   ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-500/20'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20'
               }`}
             >
               {isSimulating ? <Square className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white" />}
-              <span>{isSimulating ? 'Pausar / Detener Ruta' : 'Iniciar Ruta Animada'}</span>
+              <span>{isSimulating ? 'Detener Recorrido' : 'Iniciar Recorrido AGV'}</span>
             </button>
           ) : (
             <div className="flex items-center gap-2">
@@ -565,14 +537,14 @@ export default function SmartPicking({ masterReferences = [] }) {
 
           <button
             onClick={handleEmergencyStop}
-            className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-rose-500/20 flex items-center gap-1.5"
+            className="px-4 py-3 bg-rose-600 hover:bg-rose-500 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-rose-500/20 flex items-center gap-1.5"
           >
             <ShieldAlert className="w-4 h-4" /> Parada Emergencia
           </button>
 
           <button
             onClick={handleResetAGV}
-            className="px-3.5 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold rounded-xl transition-all border border-slate-600"
+            className="px-3.5 py-3 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold rounded-xl transition-all border border-slate-600"
             title="Reiniciar AGV a Zona Inferior"
           >
             <RotateCcw className="w-4 h-4" />
@@ -639,7 +611,7 @@ export default function SmartPicking({ masterReferences = [] }) {
       {/* WAREHOUSE CANVAS GRAPHIC WITH ANIMATED AGV */}
       <WarehouseCanvas
         layoutData={layoutData}
-        routeWaypoints={pickingResult?.route_waypoints || []}
+        routeWaypoints={routeResult?.route_waypoints || []}
         blockedAisles={blockedAisles}
         onToggleBlockAisle={handleToggleBlockAisle}
         selectedLocation={selectedLocation}
@@ -657,224 +629,197 @@ export default function SmartPicking({ masterReferences = [] }) {
         agvState={agvState}
       />
 
-      {/* PICKING REQUEST BUILDER PANEL */}
-      <div className="bg-slate-800/90 border border-slate-700/80 p-6 rounded-3xl shadow-xl space-y-4">
-        <h3 className="text-base font-black text-white flex items-center gap-2">
-          <Boxes className="w-5 h-5 text-blue-400" />
-          Generador de Solicitud de Picking
-        </h3>
-
-        {/* Input Selector Row with Fixed Styling */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          <div className="md:col-span-2">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-              Seleccionar SKU de Inventario Maestro ({availableReferences.length} disponibles)
-            </label>
-            <select
-              value={selectedSku}
-              onChange={(e) => setSelectedSku(e.target.value)}
-              className="w-full text-xs font-bold text-white bg-slate-900 p-3 rounded-xl border border-slate-700 focus:border-blue-500 outline-none cursor-pointer"
-            >
-              {availableReferences.map((ref) => (
-                <option key={ref.sku} value={ref.sku} className="bg-slate-900 text-white py-2">
-                  {ref.sku} — {ref.description} (Stock: {ref.stock})
-                </option>
-              ))}
-            </select>
+      {/* PANEL DE CONTROL MANUAL DE COORDENADAS / RACKS (SIN SKU NI INVENTARIO REAL) */}
+      <div className="bg-slate-800/90 border border-slate-700/80 p-6 rounded-3xl shadow-xl space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-700/60 pb-4">
+          <div>
+            <h3 className="text-lg font-black text-white flex items-center gap-2">
+              <Navigation className="w-5 h-5 text-blue-400" />
+              Panel de Control Manual de Coordenadas & Racks
+            </h3>
+            <p className="text-xs text-slate-400 font-medium">
+              Ruta precargada por defecto con los Racks del layout actual y sus colores/niveles de prioridad.
+            </p>
           </div>
 
-          <div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleResetToDefaultSequence}
+              className="px-3.5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold rounded-xl transition-all border border-slate-600 flex items-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+              Restablecer Racks Precargados
+            </button>
+
+            <button
+              onClick={handleStartRouteAnimation}
+              disabled={loading}
+              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center gap-1.5"
+            >
+              <Play className="w-4 h-4 fill-white" />
+              Iniciar Recorrido
+            </button>
+          </div>
+        </div>
+
+        {/* Priority Color Badges Summary Banner */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div className="p-3 bg-yellow-950/40 border border-yellow-500/40 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <span className="w-3.5 h-3.5 rounded-full bg-yellow-500 shadow-sm shadow-yellow-500/50" />
+              <div>
+                <span className="font-extrabold text-yellow-300 block">Amarillo (Nivel 1)</span>
+                <span className="text-[10px] text-slate-400">Picking manual a primer nivel</span>
+              </div>
+            </div>
+            <span className="text-xs font-black text-yellow-400 bg-yellow-500/20 px-2 py-0.5 rounded-lg border border-yellow-500/30">
+              {routeResult?.route_list?.filter((r) => r.color === 'yellow').length || 0} Racks
+            </span>
+          </div>
+
+          <div className="p-3 bg-orange-950/40 border border-orange-500/40 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <span className="w-3.5 h-3.5 rounded-full bg-orange-500 shadow-sm shadow-orange-500/50" />
+              <div>
+                <span className="font-extrabold text-orange-300 block">Naranja (Niveles 1 y 2)</span>
+                <span className="text-[10px] text-slate-400">Acceso dual a ambos niveles</span>
+              </div>
+            </div>
+            <span className="text-xs font-black text-orange-400 bg-orange-500/20 px-2 py-0.5 rounded-lg border border-orange-500/30">
+              {routeResult?.route_list?.filter((r) => r.color === 'orange').length || 0} Racks
+            </span>
+          </div>
+
+          <div className="p-3 bg-red-950/40 border border-red-500/40 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <span className="w-3.5 h-3.5 rounded-full bg-red-500 shadow-sm shadow-red-500/50" />
+              <div>
+                <span className="font-extrabold text-red-300 block">Rojo (Nivel 2)</span>
+                <span className="text-[10px] text-slate-400">Nivel superior de altura</span>
+              </div>
+            </div>
+            <span className="text-xs font-black text-red-400 bg-red-500/20 px-2 py-0.5 rounded-lg border border-red-500/30">
+              {routeResult?.route_list?.filter((r) => r.color === 'red').length || 0} Racks
+            </span>
+          </div>
+        </div>
+
+        {/* Add New Rack Input Row */}
+        <div className="flex flex-col sm:flex-row items-end gap-3 bg-slate-900/60 p-4 rounded-2xl border border-slate-700/60">
+          <div className="flex-1">
             <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-              Cantidad a Recoger
+              Agregar Ubicación / Rack por Número (1 - 60)
             </label>
             <input
               type="number"
               min="1"
-              value={selectedQty}
-              onChange={(e) => setSelectedQty(e.target.value)}
-              className="w-full text-xs font-bold text-white bg-slate-900 p-2.5 rounded-xl border border-slate-700 outline-none"
+              max="60"
+              value={newLocationInput}
+              onChange={(e) => setNewLocationInput(e.target.value)}
+              className="w-full text-xs font-bold text-white bg-slate-900 p-2.5 rounded-xl border border-slate-700 outline-none focus:border-blue-500"
+              placeholder="Ingrese número de rack (ej. 12)"
             />
           </div>
 
           <button
-            onClick={handleAddSkuToRequest}
-            className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-all border border-slate-600"
+            onClick={handleAddLocationToSequence}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-blue-500/20"
           >
-            <Plus className="w-4 h-4 text-blue-400" />
-            Agregar a la Lista
+            <Plus className="w-4 h-4" />
+            Agregar a la Ruta
           </button>
         </div>
 
-        {/* Current Pick List Queue */}
-        <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-700/60 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-300">
-              Items en Solicitud ({requestItems.length}):
-            </span>
-            <button
-              onClick={handleGeneratePicking}
-              disabled={loading || requestItems.length === 0}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50"
-            >
-              <Play className="w-4 h-4 fill-white" />
-              Generar Lista de Despacho Ordenada
-            </button>
+        {/* Error Message Display */}
+        {errorMsg && (
+          <div className="p-4 bg-rose-950/60 border border-rose-500/50 text-rose-200 text-xs font-semibold rounded-2xl flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+            <span>{errorMsg}</span>
           </div>
+        )}
 
-          <div className="flex flex-wrap gap-2">
-            {requestItems.map((item, idx) => (
-              <span
-                key={idx}
-                className="bg-slate-800 text-slate-200 border border-slate-700 text-xs px-3 py-1.5 rounded-xl font-bold flex items-center gap-2"
-              >
-                <span>{item.sku}</span>
-                <span className="bg-blue-600/30 text-blue-300 px-1.5 py-0.5 rounded text-[10px]">
-                  x{item.quantity}
-                </span>
-                <button
-                  onClick={() => handleRemoveRequestItem(item.sku)}
-                  className="text-slate-400 hover:text-rose-400 ml-1 font-black"
-                >
-                  ×
-                </button>
+        {/* Editable Rack Sequence Table */}
+        {routeResult && routeResult.route_list && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-300">
+                Lista de Racks Asignados para Recorrido ({routeResult.route_list.length} Paradas):
               </span>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Error Message Display */}
-      {errorMsg && (
-        <div className="p-4 bg-rose-950/60 border border-rose-500/50 text-rose-200 text-xs font-semibold rounded-2xl flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0" />
-          <span>{errorMsg}</span>
-        </div>
-      )}
-
-      {/* OPTIMIZED PICKING RESULTS */}
-      {pickingResult && pickingResult.dispatch_list && (
-        <div className="space-y-6">
-          <div className="bg-slate-800 border border-slate-700/80 p-6 rounded-3xl shadow-xl space-y-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-700/60 pb-4">
-              <div>
-                <h3 className="text-lg font-black text-white flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                  Comparativa de Recorrido de Picking
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Comparación entre el recorrido secuencial original y la ruta optimizada por S-Shape.
-                </p>
-              </div>
-
-              <button
-                onClick={handleExportCSV}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-md shadow-blue-500/20"
-              >
-                <Download className="w-4 h-4" />
-                Exportar Lista CSV
-              </button>
+              {routeResult.distance_comparison && (
+                <span className="text-xs font-extrabold text-emerald-400">
+                  Recorrido Optimizado S-Shape: {routeResult.distance_comparison.optimized_sequence_distance_m} metros
+                </span>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-700/60">
-                <span className="text-slate-400 block text-[10px] font-bold uppercase">Recorrido Original</span>
-                <span className="text-2xl font-black text-slate-300">
-                  {pickingResult.distance_comparison.original_sequence_distance_m} metros
-                </span>
-              </div>
-
-              <div className="bg-slate-900/60 p-4 rounded-2xl border border-blue-500/40">
-                <span className="text-blue-400 block text-[10px] font-bold uppercase">Recorrido Optimizado</span>
-                <span className="text-2xl font-black text-emerald-400">
-                  {pickingResult.distance_comparison.optimized_sequence_distance_m} metros
-                </span>
-              </div>
-
-              <div className="bg-emerald-950/40 p-4 rounded-2xl border border-emerald-500/40">
-                <span className="text-emerald-300 block text-[10px] font-bold uppercase">Distancia Ahorrada</span>
-                <span className="text-2xl font-black text-white">
-                  {pickingResult.distance_comparison.distance_saved_m} metros
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Ordered Dispatch List Table */}
-          <div className="bg-slate-800 border border-slate-700/80 rounded-3xl p-6 shadow-xl space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base font-black text-white">Lista de Despacho Ordenada</h3>
-                <p className="text-xs text-slate-400">
-                  Progreso de recolección: {pickedCount} de {totalItems} ítems recogidos ({progressPct}%)
-                </p>
-              </div>
-
-              <div className="w-48 bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-700">
-                <div
-                  className="bg-emerald-500 h-full transition-all duration-300"
-                  style={{ width: `${progressPct}%` }}
-                />
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-2xl border border-slate-700/80">
               <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-slate-900/80 text-slate-400 uppercase font-extrabold text-[10px] border-b border-slate-700">
+                <thead className="bg-slate-900/90 text-slate-400 uppercase font-extrabold text-[10px] border-b border-slate-700">
                   <tr>
-                    <th className="p-3">Recogido</th>
                     <th className="p-3">Orden</th>
-                    <th className="p-3">SKU</th>
-                    <th className="p-3">Descripción</th>
-                    <th className="p-3">Cantidad</th>
-                    <th className="p-3">Ubicación</th>
+                    <th className="p-3">Ubicación #</th>
+                    <th className="p-3">Identificador Rack</th>
                     <th className="p-3">Pasillo</th>
-                    <th className="p-3">Rack</th>
-                    <th className="p-3">Nivel Recogida</th>
+                    <th className="p-3">Cuadrante</th>
+                    <th className="p-3">Nivel de Prioridad / Color</th>
+                    <th className="p-3 text-right">Acciones de Edición</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-700/60 font-medium">
-                  {pickingResult.dispatch_list.map((item, idx) => (
-                    <tr
-                      key={idx}
-                      className={`hover:bg-slate-700/30 transition-all ${
-                        item.picked ? 'opacity-50 bg-slate-900/40' : ''
-                      }`}
-                    >
-                      <td className="p-3">
-                        <input
-                          type="checkbox"
-                          checked={item.picked || false}
-                          onChange={() => {
-                            const updated = [...pickingResult.dispatch_list];
-                            updated[idx].picked = !updated[idx].picked;
-                            setPickingResult({ ...pickingResult, dispatch_list: updated });
-                          }}
-                          className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
-                        />
-                      </td>
-                      <td className="p-3 font-black text-blue-400">#{item.pick_order}</td>
-                      <td className="p-3 font-extrabold text-white">{item.sku}</td>
-                      <td className="p-3 text-slate-300">{item.description}</td>
-                      <td className="p-3 font-bold text-amber-300">x{item.quantity}</td>
-                      <td className="p-3 font-extrabold text-white">Ubicación #{item.location_number}</td>
-                      <td className="p-3">{item.aisle}</td>
-                      <td className="p-3">{item.rack}</td>
-                      <td className="p-3">
-                        <span
-                          className="px-2 py-0.5 rounded text-[10px] font-bold text-white"
-                          style={{ backgroundColor: item.color_hex || '#334155' }}
-                        >
-                          {item.level_display}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                <tbody className="divide-y divide-slate-700/60 font-medium bg-slate-900/30">
+                  {routeResult.route_list.map((item, idx) => {
+                    let badgeClass = 'bg-slate-700 text-slate-300';
+                    if (item.color === 'yellow') badgeClass = 'bg-yellow-500 text-slate-900 font-black';
+                    else if (item.color === 'orange') badgeClass = 'bg-orange-500 text-white font-black';
+                    else if (item.color === 'red') badgeClass = 'bg-red-500 text-white font-black';
+
+                    return (
+                      <tr key={idx} className="hover:bg-slate-700/30 transition-all">
+                        <td className="p-3 font-black text-blue-400">#{item.pick_order || idx + 1}</td>
+                        <td className="p-3 font-extrabold text-white">Ubicación #{item.location_number}</td>
+                        <td className="p-3 font-bold text-slate-200">{item.rack}</td>
+                        <td className="p-3">{item.aisle}</td>
+                        <td className="p-3 text-slate-400 text-[11px]">{item.quadrant}</td>
+                        <td className="p-3">
+                          <span className={`px-2.5 py-1 rounded-lg text-[10px] uppercase shadow-sm ${badgeClass}`}>
+                            {item.color.toUpperCase()} — {item.level_display}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end space-x-1">
+                            <button
+                              onClick={() => handleMoveLocationInSequence(idx, -1)}
+                              disabled={idx === 0}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg disabled:opacity-30"
+                              title="Mover arriba"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleMoveLocationInSequence(idx, 1)}
+                              disabled={idx === routeResult.route_list.length - 1}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg disabled:opacity-30"
+                              title="Mover abajo"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleRemoveLocationFromSequence(idx)}
+                              className="p-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 rounded-lg border border-rose-800/40"
+                              title="Eliminar parada"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

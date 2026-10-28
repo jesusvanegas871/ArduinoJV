@@ -181,6 +181,120 @@ class SmartPickingEngine:
             for k, v in CUSTOM_LAYOUTS_STORE.items()
         ]
 
+    def get_default_priority_racks(self) -> List[Dict[str, Any]]:
+        """Returns the precargados racks list matching the exact layout priority colors and levels."""
+        default_ids = [4, 7, 21, 25, 41, 44, 49, 55, 60]
+        loc_map = self.example_layout["locations"]
+        result = []
+        for loc_num in default_ids:
+            loc_id = str(loc_num)
+            if loc_id in loc_map:
+                loc_data = loc_map[loc_id]
+                levels = loc_data.get("levels", [1])
+                level_disp = "1er y 2do nivel" if len(levels) > 1 else ("1er nivel" if levels[0] == 1 else "2do nivel")
+                result.append({
+                    "location_number": loc_data["number"],
+                    "rack": loc_data["rack"],
+                    "aisle": loc_data["aisle"],
+                    "aisle_number": loc_data["aisle_number"],
+                    "quadrant": loc_data["quadrant"],
+                    "color": loc_data["color"],
+                    "color_hex": loc_data["color_hex"],
+                    "levels": levels,
+                    "level_display": level_disp,
+                    "picking_rule": loc_data["picking_rule"],
+                    "description": loc_data["description"],
+                    "grid_x": loc_data["grid_x"],
+                    "grid_y": loc_data["grid_y"]
+                })
+        return result
+
+    def calculate_manual_route(
+        self,
+        location_numbers: List[int],
+        layout_id: str = "EXAMPLE_HACKATHON_2026",
+        blocked_aisles: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Calculates manual route for a sequence of rack/location IDs directly without inventory SKUs."""
+        blocked_aisles_set = set(blocked_aisles or [])
+        layout = self.example_layout if layout_id == "EXAMPLE_HACKATHON_2026" else CUSTOM_LAYOUTS_STORE.get(layout_id, self.example_layout)
+        loc_map = layout["locations"]
+
+        errors = []
+        warnings = []
+        stops = []
+
+        for loc_num in location_numbers:
+            loc_id = str(loc_num)
+            if loc_id not in loc_map:
+                errors.append(f"La ubicación #{loc_num} no existe en el layout de almacén.")
+                continue
+
+            loc_data = loc_map[loc_id]
+
+            if loc_data.get("aisle") in blocked_aisles_set:
+                warnings.append(f"El pasillo '{loc_data.get('aisle')}' para la ubicación #{loc_num} está bloqueado.")
+
+            levels_available = loc_data.get("levels", [1])
+            chosen_level = levels_available[0]
+            level_disp = "1er y 2do nivel" if len(levels_available) > 1 else ("1er nivel" if levels_available[0] == 1 else "2do nivel")
+
+            stops.append({
+                "location_number": loc_data.get("number", loc_num),
+                "rack": loc_data.get("rack", f"R-{loc_num}"),
+                "aisle": loc_data.get("aisle", "Pasillo 1"),
+                "aisle_number": loc_data.get("aisle_number", 1),
+                "quadrant": loc_data.get("quadrant", "Q1"),
+                "color": loc_data.get("color", "slate"),
+                "color_hex": loc_data.get("color_hex", "#334155"),
+                "levels": levels_available,
+                "chosen_level": chosen_level,
+                "level_display": level_disp,
+                "grid_x": loc_data.get("grid_x", 0),
+                "grid_y": loc_data.get("grid_y", 0)
+            })
+
+        if errors:
+            return {
+                "success": False,
+                "errors": errors,
+                "warnings": warnings,
+                "message": "Error al procesar la lista de coordenadas/racks."
+            }
+
+        if not stops:
+            return {
+                "success": False,
+                "message": "La lista de paradas está vacía."
+            }
+
+        original_sequence = list(stops)
+        original_distance_m = self._calculate_route_distance(original_sequence, blocked_aisles_set)
+
+        optimized_sequence = self._sort_picking_s_shape(stops, blocked_aisles_set)
+
+        for idx, item in enumerate(optimized_sequence, start=1):
+            item["pick_order"] = idx
+
+        optimized_distance_m = self._calculate_route_distance(optimized_sequence, blocked_aisles_set)
+        route_waypoints = self._build_canvas_waypoints(optimized_sequence)
+
+        return {
+            "success": True,
+            "message": f"Ruta calculada con éxito. {len(optimized_sequence)} paradas de racks registradas.",
+            "layout_id": layout_id,
+            "warnings": warnings,
+            "total_stops": len(optimized_sequence),
+            "route_list": optimized_sequence,
+            "distance_comparison": {
+                "original_sequence_distance_m": round(original_distance_m, 1),
+                "optimized_sequence_distance_m": round(optimized_distance_m, 1),
+                "distance_saved_m": round(max(0, original_distance_m - optimized_distance_m), 1),
+                "methodology_disclaimer": "Recorrido S-Shape optimizado a través de cuadrícula de pasillos."
+            },
+            "route_waypoints": route_waypoints
+        }
+
     def optimize_picking(
         self,
         requested_items: List[Dict[str, Any]],  # [{"sku": "SKU-1", "quantity": 5}, ...]
@@ -384,12 +498,14 @@ class SmartPickingEngine:
 
         for idx, item in enumerate(sequence, start=1):
             color = item.get("color", "slate")
+            sku_val = item.get("sku", f"RACK-{item['location_number']}")
+            sku_text = f" SKU {item['sku']}" if "sku" in item else ""
             waypoints.append({
                 "step": idx,
                 "type": "PICK",
                 "x": item["grid_x"],
                 "y": item["grid_y"],
-                "sku": item["sku"],
+                "sku": sku_val,
                 "location": item["location_number"],
                 "aisle": item.get("aisle", "Pasillo 1"),
                 "rack": item.get("rack", "R1"),
@@ -398,7 +514,7 @@ class SmartPickingEngine:
                 "chosen_level": item.get("chosen_level", 1),
                 "dwell_time_ms": 1500 if color == "red" else (1200 if color == "orange" else 1000),
                 "audio_tag": f"pick_{color}",
-                "label": f"#{idx} SKU {item['sku']} (Ubicación #{item['location_number']}, {item.get('level_display', 'Nivel 1')})"
+                "label": f"#{idx} Rack {item.get('rack', 'R' + str(item['location_number']))}{sku_text} ({item.get('level_display', '1er nivel')})"
             })
 
         waypoints.append({
