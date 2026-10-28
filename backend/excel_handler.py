@@ -10,6 +10,23 @@ def create_sample_excel_if_not_exists(filepath: str = DEFAULT_EXCEL_PATH) -> str
     """Genera un archivo de respaldo si no existe."""
     if os.path.exists(filepath):
         return filepath
+
+    parent_dir = os.path.dirname(filepath)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    sample_data = []
+    for i in range(1, 21):
+        sample_data.append({
+            "CODIGO": f"SKU-{1000 + i}",
+            "DESCRIPCIÓN": f"Producto de Prueba {i}",
+            "CATEGORIA": "Categoría A" if i % 2 == 0 else "Categoría B"
+        })
+
+    df = pd.DataFrame(sample_data)
+    with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="PRODUCTOS A INCLUIR", startrow=3, index=False)
+
     return filepath
 
 def read_inventory_excel(file_source: Any) -> Tuple[List[Dict[str, Any]], str]:

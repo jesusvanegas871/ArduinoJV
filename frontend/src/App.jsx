@@ -11,16 +11,23 @@ import {
   BarChart2,
   FileSpreadsheet,
   Building2,
-  ShieldCheck
+  ShieldCheck,
+  Truck,
+  Navigation,
+  Compass
 } from 'lucide-react';
 
 import InventoryTable from './components/InventoryTable';
 import CycleCountManager from './components/CycleCountManager';
+import RouteOptimizer from './components/RouteOptimizer';
+import SmartPicking from './components/SmartPicking';
 
 const API_BASE_URL = 'http://localhost:8000';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('inventory'); // 'inventory' | 'cycle'
+  const [activeTab, setActiveTab] = useState('inventory'); // 'inventory' | 'cycle' | 'logistics'
+  const [logisticsSubTab, setLogisticsSubTab] = useState('routes'); // 'routes' | 'picking'
+
   const [references, setReferences] = useState([]);
   const [stats, setStats] = useState({
     total_items: 0,
@@ -174,20 +181,20 @@ export default function App() {
               <div className="flex items-center space-x-2">
                 <h1 className="text-xl font-black text-white tracking-tight">WMS LOGÍSTICA 2026</h1>
                 <span className="bg-blue-500/10 text-blue-400 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-blue-500/30 uppercase">
-                  Conteo Cíclico
+                  Sistema Integral WMS
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-medium">
-                Hackatón Logística 2026 — Asignación Aleatoria Restringida (Max 5 Conteos Anuales)
+                Hackatón Logística 2026 — Inventario, Conteo Cíclico & Optimización Logística
               </p>
             </div>
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex items-center p-1.5 bg-slate-900/90 rounded-2xl border border-slate-700/80">
+          <div className="flex flex-wrap items-center p-1.5 bg-slate-900/90 rounded-2xl border border-slate-700/80 gap-1">
             <button
               onClick={() => setActiveTab('inventory')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
                 activeTab === 'inventory'
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
                   : 'text-slate-400 hover:text-slate-200'
@@ -196,16 +203,29 @@ export default function App() {
               <FileSpreadsheet className="w-4 h-4" />
               <span>Maestro de Inventario ({references.length})</span>
             </button>
+
             <button
               onClick={() => setActiveTab('cycle')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
                 activeTab === 'cycle'
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               <Calendar className="w-4 h-4" />
-              <span>Conteo Cíclico Semanal</span>
+              <span>Conteo Cíclico</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('logistics')}
+              className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeTab === 'logistics'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Truck className="w-4 h-4 text-indigo-300" />
+              <span>Optimización Logística</span>
             </button>
           </div>
         </div>
@@ -285,6 +305,35 @@ export default function App() {
           </div>
         </div>
 
+        {/* LOGISTICS SUB-NAVIGATION IF LOGISTICS TAB ACTIVE */}
+        {activeTab === 'logistics' && (
+          <div className="flex items-center space-x-2 bg-slate-800/80 p-1.5 rounded-2xl border border-slate-700/80 w-fit">
+            <button
+              onClick={() => setLogisticsSubTab('routes')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-2 ${
+                logisticsSubTab === 'routes'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Navigation className="w-4 h-4" />
+              <span>Rutas de Distribución (Tarea 5)</span>
+            </button>
+
+            <button
+              onClick={() => setLogisticsSubTab('picking')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center space-x-2 ${
+                logisticsSubTab === 'picking'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Boxes className="w-4 h-4" />
+              <span>Picking Inteligente (Tarea 6)</span>
+            </button>
+          </div>
+        )}
+
         {/* Tab Views */}
         {activeTab === 'inventory' ? (
           <InventoryTable
@@ -293,7 +342,7 @@ export default function App() {
             onUploadExcel={handleUploadExcel}
             loading={loading}
           />
-        ) : (
+        ) : activeTab === 'cycle' ? (
           <CycleCountManager
             schedule={schedule}
             stats={stats}
@@ -303,12 +352,16 @@ export default function App() {
             onReset={handleReset}
             loading={loading}
           />
+        ) : logisticsSubTab === 'routes' ? (
+          <RouteOptimizer />
+        ) : (
+          <SmartPicking masterReferences={references} />
         )}
       </main>
 
       {/* Footer */}
       <footer className="border-t border-slate-800 py-6 mt-12 text-center text-xs text-slate-500">
-        <p>Hackatón Logística 2026 — Núcleo de Software WMS para Conteo Cíclico con Python FastAPI & React JSX</p>
+        <p>Hackatón Logística 2026 — Núcleo de Software WMS para Conteo Cíclico & Optimización Logística con Python FastAPI & React JSX</p>
       </footer>
     </div>
   );
