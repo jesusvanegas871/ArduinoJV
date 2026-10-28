@@ -2,11 +2,13 @@ import React, { useEffect, useRef } from 'react';
 import { Terminal, Trash2, Download, ShieldAlert, Cpu, Activity, Play } from 'lucide-react';
 
 export default function LiveLogTerminal({ logs = [], onClearLogs, agvState = {} }) {
-  const terminalEndRef = useRef(null);
+  const logContainerRef = useRef(null);
 
-  // Auto-scroll to bottom on new log entry
+  // Auto-scroll log console internally without scrolling the page viewport
   useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
   }, [logs]);
 
   const handleExportLogs = () => {
@@ -118,7 +120,10 @@ export default function LiveLogTerminal({ logs = [], onClearLogs, agvState = {} 
       </div>
 
       {/* Log Console Output Area */}
-      <div className="h-48 overflow-y-auto bg-slate-950 p-3 rounded-2xl border border-slate-900 text-xs space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800">
+      <div
+        ref={logContainerRef}
+        className="h-48 overflow-y-auto bg-slate-950 p-3 rounded-2xl border border-slate-900 text-xs space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800"
+      >
         {logs.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-600 text-xs font-medium">
             &gt; Esperando eventos del sistema... Presiona "Iniciar Ruta" o usa el Modo Manual.
@@ -140,7 +145,6 @@ export default function LiveLogTerminal({ logs = [], onClearLogs, agvState = {} 
             </div>
           ))
         )}
-        <div ref={terminalEndRef} />
       </div>
     </div>
   );

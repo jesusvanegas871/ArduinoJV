@@ -150,7 +150,7 @@ def test_manual_route_endpoints():
     assert res_manual.status_code == 200
     data_manual = res_manual.json()
     assert data_manual["success"] is True
-    assert data_manual["total_stops"] == 9
-    assert len(data_manual["route_waypoints"]) == 11  # START + 9 stops + END
+    # 9 locations total, with 3 Orange locations (4, 25, 60) generating mandatory double stops -> 12 total stops
+    assert data_manual["total_stops"] == 12
     assert data_manual["route_waypoints"][0]["type"] == "START"
     assert data_manual["route_waypoints"][-1]["type"] == "END"

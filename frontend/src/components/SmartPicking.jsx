@@ -237,7 +237,10 @@ export default function SmartPicking() {
 
       if (wp.type === 'START') {
         addLog(`Punto 0: Salida desde ${wp.zone}`, 'INFO');
-        simulationTimerRef.current = setTimeout(() => runWaypointStep(idx + 1), 900);
+        simulationTimerRef.current = setTimeout(() => runWaypointStep(idx + 1), 800);
+      } else if (wp.type === 'TRANSIT') {
+        addLog(`↔ TRÁNSITO POR PASILLO: ${wp.label}`, 'INFO');
+        simulationTimerRef.current = setTimeout(() => runWaypointStep(idx + 1), 400);
       } else if (wp.type === 'PICK') {
         addLog(`🛑 PARADA #${wp.step}: Llegada a ${wp.label} (${wp.aisle}). Operación de recogida en nivel de prioridad...`, 'ACTION');
 
