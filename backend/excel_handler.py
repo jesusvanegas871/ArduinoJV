@@ -1,4 +1,5 @@
 import os
+import io
 import pandas as pd
 from typing import List, Dict, Any, Tuple
 
@@ -44,6 +45,8 @@ def read_inventory_excel(file_source: Any) -> Tuple[List[Dict[str, Any]], str]:
     Returns (list_of_references, status_message).
     """
     try:
+        if isinstance(file_source, bytes):
+            file_source = io.BytesIO(file_source)
         df = pd.read_excel(file_source, engine='openpyxl')
     except Exception as e:
         return [], f"Error al leer el archivo Excel: {str(e)}"

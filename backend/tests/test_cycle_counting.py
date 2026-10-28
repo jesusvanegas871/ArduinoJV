@@ -17,6 +17,16 @@ def test_excel_handler(tmp_path):
     assert "sku" in refs[0]
     assert "category" in refs[0]
 
+def test_excel_handler_raw_bytes(tmp_path):
+    excel_file = os.path.join(tmp_path, "test_inventario.xlsx")
+    created_path = create_sample_excel_if_not_exists(excel_file)
+    with open(created_path, "rb") as f:
+        file_bytes = f.read()
+
+    refs, msg = read_inventory_excel(file_bytes)
+    assert "exitosamente" in msg.lower()
+    assert len(refs) == 20
+
 def test_cycle_count_engine_5_counts_constraint():
     sample_refs = [
         {"sku": f"REF-{i}", "description": f"Item {i}", "category": "A", "location": "Pasillo A", "stock": 100, "unit_cost": 10.0}
@@ -60,7 +70,7 @@ def test_no_extra_counts_allowed():
     assert ref["counts_completed"] == 5
     assert ref["is_blocked"] is True
 
-def test_fastapi_endpoints():
+def test_fastapi_endpoints(tmp_path):
     client = TestClient(app)
 
     # Get inventory
@@ -69,6 +79,15 @@ def test_fastapi_endpoints():
     data = res.json()
     assert "references" in data
     assert "stats" in data
+
+    # Test Excel file upload via API
+    excel_file = os.path.join(tmp_path, "upload_test.xlsx")
+    created_path = create_sample_excel_if_not_exists(excel_file)
+    with open(created_path, "rb") as f:
+        res = client.post("/api/upload-excel", files={"file": ("inventario.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+    assert res.status_code == 200
+    assert res.json()["success"] is True
+    assert len(res.json()["references"]) == 20
 
     # Reset
     res = client.post("/api/cycle-count/reset")
