@@ -1,33 +1,18 @@
-INFO:     Started server process [76215]
+INFO:     Started server process [97951]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:53956 - "GET /api/inventory HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55754 - "GET /api/inventory HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55756 - "GET /api/inventory HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55756 - "GET /api/cycle-count/schedule HTTP/1.1" 200 OK
-INFO:     127.0.0.1:55756 - "GET /api/cycle-count/schedule HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47882 - "GET /api/inventory HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47896 - "GET /api/inventory HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47896 - "GET /api/cycle-count/schedule HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47882 - "GET /api/cycle-count/schedule HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47882 - "GET /api/logistics/satellites HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47896 - "GET /api/logistics/satellites HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47896 - "OPTIONS /api/logistics/routes HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47882 - "POST /api/logistics/routes HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47882 - "GET /api/picking/example-layout HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47882 - "GET /api/picking/example-layout HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47882 - "OPTIONS /api/picking/optimize-pick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:47896 - "POST /api/picking/optimize-pick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49464 - "GET /api/inventory HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49470 - "GET /api/inventory HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49470 - "GET /api/cycle-count/schedule HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49464 - "GET /api/cycle-count/schedule HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49464 - "GET /api/logistics/satellites HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49470 - "GET /api/logistics/satellites HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49470 - "OPTIONS /api/logistics/routes HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49464 - "POST /api/logistics/routes HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49464 - "GET /api/picking/example-layout HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49470 - "GET /api/picking/example-layout HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49470 - "OPTIONS /api/picking/optimize-pick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49464 - "POST /api/picking/optimize-pick HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45736 - "GET /api/inventory HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45738 - "GET /api/inventory HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45738 - "GET /api/cycle-count/schedule HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45736 - "GET /api/cycle-count/schedule HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45736 - "GET /api/logistics/satellites HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45738 - "GET /api/logistics/satellites HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45738 - "OPTIONS /api/logistics/routes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45736 - "POST /api/logistics/routes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45736 - "GET /api/picking/example-layout HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45736 - "OPTIONS /api/picking/manual-route HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45738 - "GET /api/picking/example-layout HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58784 - "OPTIONS /api/picking/manual-route HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58800 - "POST /api/picking/manual-route HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45738 - "POST /api/picking/manual-route HTTP/1.1" 200 OK

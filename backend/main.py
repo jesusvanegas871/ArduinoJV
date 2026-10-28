@@ -52,6 +52,12 @@ class OptimizePickRequestModel(BaseModel):
     blocked_aisles: Optional[List[str]] = None
 
 
+class ManualRouteRequestModel(BaseModel):
+    location_numbers: List[int]
+    layout_id: str = "EXAMPLE_HACKATHON_2026"
+    blocked_aisles: Optional[List[str]] = None
+
+
 class ExportCSVRequestModel(BaseModel):
     dispatch_list: List[Dict[str, Any]]
 
@@ -169,6 +175,28 @@ def calculate_distribution_routes(req: RouteRequestModel):
 def get_example_layout():
     """Returns the faithful Hackathon Example Layout (Orange, Red, Yellow locations)."""
     return picking_engine.get_example_layout()
+
+
+@app.get("/api/picking/default-racks")
+def get_default_racks():
+    """Returns the default list of precargados racks with priority colors and levels."""
+    return {
+        "success": True,
+        "default_racks": picking_engine.get_default_priority_racks()
+    }
+
+
+@app.post("/api/picking/manual-route")
+def calculate_manual_route(req: ManualRouteRequestModel):
+    """Calculates route and waypoints for a manual list of location/rack numbers without requiring SKUs."""
+    res = picking_engine.calculate_manual_route(
+        location_numbers=req.location_numbers,
+        layout_id=req.layout_id,
+        blocked_aisles=req.blocked_aisles
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res)
+    return res
 
 
 @app.get("/api/picking/custom-layouts")

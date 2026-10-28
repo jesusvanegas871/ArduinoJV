@@ -3,11 +3,11 @@ import time
 
 with sync_playwright() as p:
     browser = p.chromium.launch()
-    page = browser.new_page(viewport={"width": 1280, "height": 960})
+    page = browser.new_page(viewport={"width": 1400, "height": 1100})
     page.goto("http://localhost:5173")
     time.sleep(2)
 
-    # Click on Logistics tab button
+    # Click on Logistics tab
     page.locator("button:has-text('Optimización Logística')").click()
     time.sleep(1)
 
@@ -15,10 +15,10 @@ with sync_playwright() as p:
     page.locator("button:has-text('Picking Inteligente')").click()
     time.sleep(1)
 
-    # Click Generar Lista de Despacho Ordenada
-    page.locator("button:has-text('Generar Lista de Despacho Ordenada')").click()
-    time.sleep(1)
+    # Click Iniciar Recorrido AGV button
+    page.locator("button:has-text('Iniciar Recorrido AGV')").first.click()
+    time.sleep(3)
 
-    page.screenshot(path="picking_ui.png", full_page=True)
+    page.screenshot(path="agv_simulation.png", full_page=True)
     browser.close()
-print("Screenshot taken!")
+print("Screenshot agv_simulation.png captured successfully!")

@@ -125,3 +125,32 @@ def test_logistics_fastapi_endpoints():
     assert len(waypoints) >= 3
     assert waypoints[0]["audio_tag"] == "start"
     assert waypoints[-1]["audio_tag"] == "end"
+
+
+def test_manual_route_endpoints():
+    client = TestClient(app)
+
+    # Get default priority racks endpoint
+    res_default = client.get("/api/picking/default-racks")
+    assert res_default.status_code == 200
+    data_default = res_default.json()
+    assert data_default["success"] is True
+    racks = data_default["default_racks"]
+    assert len(racks) == 9
+    rack_nums = [r["location_number"] for r in racks]
+    assert 4 in rack_nums and 41 in rack_nums and 7 in rack_nums
+
+    # Manual route calculation endpoint
+    payload = {
+        "location_numbers": [4, 7, 21, 25, 41, 44, 49, 55, 60],
+        "layout_id": "EXAMPLE_HACKATHON_2026",
+        "blocked_aisles": []
+    }
+    res_manual = client.post("/api/picking/manual-route", json=payload)
+    assert res_manual.status_code == 200
+    data_manual = res_manual.json()
+    assert data_manual["success"] is True
+    assert data_manual["total_stops"] == 9
+    assert len(data_manual["route_waypoints"]) == 11  # START + 9 stops + END
+    assert data_manual["route_waypoints"][0]["type"] == "START"
+    assert data_manual["route_waypoints"][-1]["type"] == "END"

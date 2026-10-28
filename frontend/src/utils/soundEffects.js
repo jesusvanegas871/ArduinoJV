@@ -80,6 +80,13 @@ export const SoundEffects = {
     playTone(523.25, 'sine', 0.18, 0.15); // C5
   },
 
+  playArrivalForColor: (color) => {
+    if (color === 'orange') SoundEffects.playArrivalOrange();
+    else if (color === 'red') SoundEffects.playArrivalRed();
+    else if (color === 'yellow') SoundEffects.playArrivalYellow();
+    else SoundEffects.playArrivalStandard();
+  },
+
   // Manual step motor sound
   playManualStep: () => {
     playTone(329.63, 'triangle', 0.08, 0.12); // E4
