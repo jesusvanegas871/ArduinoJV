@@ -1,5 +1,5 @@
-import React from 'react';
-import { Layers, AlertTriangle, Lock, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { Layers, AlertTriangle, Lock, ShieldAlert, CheckCircle2, Cpu, Zap, Radio, Play, Square } from 'lucide-react';
 
 export default function WarehouseCanvas({
   layoutData,
@@ -7,7 +7,11 @@ export default function WarehouseCanvas({
   blockedAisles = [],
   onToggleBlockAisle,
   selectedLocation,
-  onSelectLocation
+  onSelectLocation,
+  agvPos = { x: 2, y: 0, status: 'IDLE', mode: 'auto', currentWaypointIdx: 0 },
+  isSimulating = false,
+  soundEnabled = true,
+  onToggleSound
 }) {
   if (!layoutData || !layoutData.locations) {
     return (
@@ -32,42 +36,98 @@ export default function WarehouseCanvas({
   });
 
   // Waypoint index lookup for visual pick order badges
-  const pickOrderMap = {};
-  routeWaypoints.forEach((wp) => {
-    if (wp.type === 'PICK' && wp.location) {
-      pickOrderMap[String(wp.location)] = wp.step;
-    }
-  });
+  const pickOrderMap = useMemo(() => {
+    const map = {};
+    routeWaypoints.forEach((wp) => {
+      if (wp.type === 'PICK' && wp.location) {
+        map[String(wp.location)] = wp.step;
+      }
+    });
+    return map;
+  }, [routeWaypoints]);
+
+  /**
+   * Helper to compute SVG percentage coordinates for waypoints and AGV position.
+   * Aisle 1 (x=2) -> ~12.5% X
+   * Aisle 2 (x=5) -> ~37.5% X
+   * Aisle 3 (x=8) -> ~62.5% X
+   * Aisle 4 (x=11) -> ~87.5% X
+   * y=0 (Entrance/Despacho) -> 92% Y
+   * y=1..15 -> 84% Y down to 10% Y
+   */
+  const getCanvasCoordsPct = (gridX, gridY) => {
+    let pctX = 12.5;
+    if (gridX <= 3) pctX = 12.5;
+    else if (gridX <= 6) pctX = 37.5;
+    else if (gridX <= 9) pctX = 62.5;
+    else pctX = 87.5;
+
+    // Y coordinates 0 to 15
+    const clampedY = Math.max(0, Math.min(15, gridY));
+    let pctY = 92 - (clampedY * 5.3);
+    return { x: pctX, y: pctY };
+  };
+
+  // Build SVG Path Data string (d attribute) connecting all waypoints
+  const svgPathD = useMemo(() => {
+    if (!routeWaypoints || routeWaypoints.length < 2) return '';
+    return routeWaypoints
+      .map((wp, idx) => {
+        const { x, y } = getCanvasCoordsPct(wp.x, wp.y);
+        return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`;
+      })
+      .join(' ');
+  }, [routeWaypoints]);
+
+  // Current AGV percentage position on canvas
+  const agvCoords = getCanvasCoordsPct(agvPos.x, agvPos.y);
 
   return (
     <div className="bg-slate-900/90 border border-slate-700/80 rounded-3xl p-6 shadow-2xl space-y-6">
       {/* Top Controls & Legend */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
-          <h3 className="text-base font-black text-white flex items-center gap-2">
-            <Layers className="w-5 h-5 text-blue-400" />
-            {layoutData.name || 'Layout de Ejemplo de Almacén'}
-          </h3>
+          <div className="flex items-center space-x-2">
+            <h3 className="text-base font-black text-white flex items-center gap-2">
+              <Layers className="w-5 h-5 text-blue-400" />
+              {layoutData.name || 'Layout de Almacén WMS 2026'}
+            </h3>
+            <span className="bg-blue-500/10 text-blue-400 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-blue-500/30 uppercase">
+              Mapa Interactivo en Tiempo Real
+            </span>
+          </div>
           <p className="text-xs text-slate-400 font-medium">
-            Representación fiel del layout de la hackatón: Racks, Pasillos, Salidas Inferiores y Niveles de Recogida.
+            Representación de pasillos, trazado dinámico de ruta animada y simulación AGV Arduino/AGV.
           </p>
         </div>
 
-        {/* Structured Color Legend */}
+        {/* Structured Color Legend & Audio Toggle */}
         <div className="flex flex-wrap items-center gap-3 text-xs">
+          <button
+            onClick={onToggleSound}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border flex items-center gap-1.5 ${
+              soundEnabled
+                ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/40 shadow-sm'
+                : 'bg-slate-800 text-slate-400 border-slate-700'
+            }`}
+          >
+            <Radio className={`w-3.5 h-3.5 ${soundEnabled ? 'text-indigo-400 animate-pulse' : 'text-slate-500'}`} />
+            <span>Audio {soundEnabled ? 'ON' : 'OFF'}</span>
+          </button>
+
           <div className="flex items-center space-x-1.5 bg-slate-800 px-3 py-1.5 rounded-xl border border-orange-500/30">
             <span className="w-3.5 h-3.5 rounded-md bg-orange-500 shadow-sm shadow-orange-500/50" />
-            <span className="font-bold text-orange-300">Naranja (4, 25, 60): Niveles 1 y 2</span>
+            <span className="font-bold text-orange-300">Naranja (4, 25, 60): Niv. 1-2</span>
           </div>
 
           <div className="flex items-center space-x-1.5 bg-slate-800 px-3 py-1.5 rounded-xl border border-red-500/30">
             <span className="w-3.5 h-3.5 rounded-md bg-red-500 shadow-sm shadow-red-500/50" />
-            <span className="font-bold text-red-300">Rojo (41, 44, 49): Nivel 2</span>
+            <span className="font-bold text-red-300">Rojo (41, 44, 49): Niv. 2</span>
           </div>
 
           <div className="flex items-center space-x-1.5 bg-slate-800 px-3 py-1.5 rounded-xl border border-yellow-500/30">
             <span className="w-3.5 h-3.5 rounded-md bg-yellow-500 shadow-sm shadow-yellow-500/50" />
-            <span className="font-bold text-yellow-300">Amarillo (7, 21, 55): Nivel 1</span>
+            <span className="font-bold text-yellow-300">Amarillo (7, 21, 55): Niv. 1</span>
           </div>
         </div>
       </div>
@@ -98,15 +158,126 @@ export default function WarehouseCanvas({
       </div>
 
       {/* Interactive Layout Graphic Canvas */}
-      <div className="relative bg-slate-950 p-6 rounded-2xl border border-slate-800 overflow-x-auto min-w-[700px]">
-        {/* Entrance / Exit Bottom Marker */}
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-blue-600/30 text-blue-300 text-[11px] font-black px-6 py-1.5 rounded-full border border-blue-500/40 uppercase tracking-wider flex items-center gap-2 shadow-lg z-10">
-          <CheckCircle2 className="w-4 h-4 text-blue-400" />
-          Zona Inferior de Entrada / Despacho
+      <div className="relative bg-slate-950 p-6 rounded-2xl border border-slate-800 overflow-hidden min-w-[700px]">
+        {/* SVG Route Traversal & Stop Overlay Layer */}
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none z-10"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          {/* Animated Trajectory Path Line */}
+          {svgPathD && (
+            <>
+              {/* Outer Glowing Path */}
+              <path
+                d={svgPathD}
+                fill="none"
+                stroke="#3b82f6"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.4"
+              />
+              {/* Pulsing Animated Dashed Path */}
+              <path
+                d={svgPathD}
+                fill="none"
+                stroke="#60a5fa"
+                strokeWidth="0.8"
+                strokeDasharray="2 1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="animate-pulse"
+              />
+            </>
+          )}
+
+          {/* Waypoint Stop Markers */}
+          {routeWaypoints.map((wp, i) => {
+            const { x, y } = getCanvasCoordsPct(wp.x, wp.y);
+            if (wp.type === 'START' || wp.type === 'END') return null;
+            const isCurrentStop = agvPos.currentWaypointIdx === wp.step && isSimulating;
+
+            return (
+              <g key={i} className="transition-all duration-300">
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={isCurrentStop ? "2.2" : "1.4"}
+                  fill={isCurrentStop ? "#10b981" : "#3b82f6"}
+                  stroke="#ffffff"
+                  strokeWidth="0.4"
+                />
+                {isCurrentStop && (
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r="3.8"
+                    fill="none"
+                    stroke="#10b981"
+                    strokeWidth="0.3"
+                    className="animate-ping"
+                  />
+                )}
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Dynamic Animated AGV Vehicle Graphic (Arduino/AGV Avatar) */}
+        <div
+          className="absolute z-30 transition-all duration-500 ease-in-out transform -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+          style={{ left: `${agvCoords.x}%`, top: `${agvCoords.y}%` }}
+        >
+          <div className="relative group">
+            {/* AGV Vehicle Outer Chassis Graphic */}
+            <div
+              className={`w-12 h-12 rounded-2xl p-1.5 flex flex-col items-center justify-between shadow-2xl transition-all border ${
+                agvPos.status === 'MOVING'
+                  ? 'bg-blue-600 border-blue-300 ring-4 ring-blue-500/40 animate-pulse'
+                  : agvPos.status === 'STOPPED_PICKING'
+                  ? 'bg-amber-600 border-amber-300 ring-4 ring-amber-500/40'
+                  : 'bg-slate-800 border-slate-600'
+              }`}
+            >
+              {/* Front Status LEDs & Headlights */}
+              <div className="flex items-center justify-between w-full px-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${agvPos.status === 'MOVING' ? 'bg-emerald-400 animate-ping' : 'bg-slate-400'}`} />
+                <span className="text-[7px] font-black text-white tracking-widest">AGV-01</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${agvPos.status === 'STOPPED_PICKING' ? 'bg-amber-300 animate-ping' : 'bg-slate-400'}`} />
+              </div>
+
+              {/* Arduino Microcontroller Chip Icon */}
+              <div className="my-0.5">
+                <Cpu className={`w-5 h-5 ${agvPos.status === 'MOVING' ? 'text-white' : 'text-blue-400'}`} />
+              </div>
+
+              {/* Bottom Wheels / Battery LED */}
+              <div className="flex items-center justify-between w-full px-1">
+                <span className="w-1 h-2 bg-slate-900 rounded-sm" />
+                <span className="text-[8px] font-extrabold text-emerald-300">
+                  {agvPos.batteryPct ?? 100}%
+                </span>
+                <span className="w-1 h-2 bg-slate-900 rounded-sm" />
+              </div>
+            </div>
+
+            {/* Floating AGV Tooltip Badge */}
+            <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap bg-slate-900 text-white text-[9px] font-black px-2 py-0.5 rounded-lg border border-slate-700 shadow-xl flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${isSimulating ? 'bg-emerald-400' : 'bg-slate-400'}`} />
+              {agvPos.status === 'MOVING'
+                ? 'DESPLAZÁNDOSE...'
+                : agvPos.status === 'STOPPED_PICKING'
+                ? 'RECOGIENDO ÍTEM...'
+                : agvPos.status === 'COMPLETED'
+                ? 'RUTA FINALIZADA'
+                : 'AGV LISTO (ENTRADA)'}
+            </div>
+          </div>
         </div>
 
         {/* 4 Aisles Grid Layout */}
-        <div className="grid grid-cols-4 gap-6 pb-12">
+        <div className="grid grid-cols-4 gap-6 pb-14">
           {aisles.map((aNum) => {
             const aisleName = `Pasillo ${aNum}`;
             const isBlocked = blockedAisles.includes(aisleName);
@@ -136,6 +307,7 @@ export default function WarehouseCanvas({
                   {locs.map((loc) => {
                     const pickOrder = pickOrderMap[String(loc.number)];
                     const isSelected = selectedLocation && selectedLocation.id === String(loc.number);
+                    const isCurrentAgvLocation = agvPos.location === loc.number && agvPos.status === 'STOPPED_PICKING';
 
                     // Dynamic styling based on structured location colors
                     let bgColor = 'bg-slate-800 border-slate-700 text-slate-200';
@@ -158,11 +330,11 @@ export default function WarehouseCanvas({
                         onClick={() => onSelectLocation && onSelectLocation(loc)}
                         className={`relative p-3 rounded-xl border text-left transition-all hover:scale-[1.03] ${bgColor} ${
                           isSelected ? 'ring-2 ring-blue-400 shadow-lg' : ''
-                        }`}
+                        } ${isCurrentAgvLocation ? 'ring-4 ring-amber-400 animate-pulse bg-amber-950/80' : ''}`}
                       >
                         {/* Pick Order Step Badge Overlay */}
                         {pickOrder && (
-                          <span className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-blue-600 text-white border-2 border-slate-900 font-black text-xs flex items-center justify-center shadow-lg animate-bounce z-20">
+                          <span className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-blue-600 text-white border-2 border-slate-900 font-black text-xs flex items-center justify-center shadow-lg z-20">
                             #{pickOrder}
                           </span>
                         )}
@@ -184,6 +356,12 @@ export default function WarehouseCanvas({
               </div>
             );
           })}
+        </div>
+
+        {/* Entrance / Exit Bottom Marker */}
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-blue-600/30 text-blue-300 text-[11px] font-black px-6 py-2 rounded-full border border-blue-500/40 uppercase tracking-wider flex items-center gap-2 shadow-2xl z-20">
+          <CheckCircle2 className="w-4 h-4 text-blue-400" />
+          Zona Inferior de Entrada / Despacho (Punto de Partida AGV)
         </div>
       </div>
 

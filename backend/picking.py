@@ -371,10 +371,19 @@ class SmartPickingEngine:
         return total_dist_grid * grid_to_meters
 
     def _build_canvas_waypoints(self, sequence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Generates waypoint coordinates for rendering line route on layout canvas."""
-        waypoints = [{"step": 0, "type": "START", "x": 2, "y": 0, "label": "Punto de Inicio / Despacho"}]
+        """Generates waypoint coordinates with enriched metadata for rendering animated AGV routes."""
+        waypoints = [{
+            "step": 0,
+            "type": "START",
+            "x": 2,
+            "y": 0,
+            "zone": "Zona Inferior de Entrada / Despacho",
+            "audio_tag": "start",
+            "label": "Punto de Inicio / Despacho"
+        }]
 
         for idx, item in enumerate(sequence, start=1):
+            color = item.get("color", "slate")
             waypoints.append({
                 "step": idx,
                 "type": "PICK",
@@ -382,7 +391,14 @@ class SmartPickingEngine:
                 "y": item["grid_y"],
                 "sku": item["sku"],
                 "location": item["location_number"],
-                "label": f"#{idx} SKU {item['sku']} (Ubicación {item['location_number']}, {item['level_display']})"
+                "aisle": item.get("aisle", "Pasillo 1"),
+                "rack": item.get("rack", "R1"),
+                "quadrant": item.get("quadrant", "Q1"),
+                "color": color,
+                "chosen_level": item.get("chosen_level", 1),
+                "dwell_time_ms": 1500 if color == "red" else (1200 if color == "orange" else 1000),
+                "audio_tag": f"pick_{color}",
+                "label": f"#{idx} SKU {item['sku']} (Ubicación #{item['location_number']}, {item.get('level_display', 'Nivel 1')})"
             })
 
         waypoints.append({
@@ -390,7 +406,9 @@ class SmartPickingEngine:
             "type": "END",
             "x": 2,
             "y": 0,
-            "label": "Retorno a Despacho"
+            "zone": "Zona Inferior de Entrada / Despacho",
+            "audio_tag": "end",
+            "label": "Retorno a Despacho / Zona Inferior"
         })
 
         return waypoints
