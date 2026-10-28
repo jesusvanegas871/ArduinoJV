@@ -3,7 +3,6 @@ import { Search, Filter, Lock, CheckCircle2, AlertCircle, RefreshCw, Layers, Shi
 
 export default function InventoryTable({ references, stats, onUploadExcel, loading }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [sortField, setSortField] = useState('sku');
   const [sortDirection, setSortDirection] = useState('asc');
@@ -31,9 +30,6 @@ export default function InventoryTable({ references, stats, onUploadExcel, loadi
         item.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.location.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchesCategory =
-        categoryFilter === 'ALL' || item.category === categoryFilter;
-
       let matchesStatus = true;
       if (statusFilter === 'BLOCKED') {
         matchesStatus = item.is_blocked || item.counts_completed === 5;
@@ -43,7 +39,7 @@ export default function InventoryTable({ references, stats, onUploadExcel, loadi
         matchesStatus = item.counts_completed === 0;
       }
 
-      return matchesSearch && matchesCategory && matchesStatus;
+      return matchesSearch && matchesStatus;
     }).sort((a, b) => {
       let valA = a[sortField];
       let valB = b[sortField];
@@ -55,7 +51,7 @@ export default function InventoryTable({ references, stats, onUploadExcel, loadi
       if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [references, searchTerm, categoryFilter, statusFilter, sortField, sortDirection]);
+  }, [references, searchTerm, statusFilter, sortField, sortDirection]);
 
   return (
     <div className="space-y-6">
@@ -75,21 +71,6 @@ export default function InventoryTable({ references, stats, onUploadExcel, loadi
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-1.5">
-            <Filter className="w-4 h-4 text-slate-400" />
-            <span className="text-xs text-slate-400 font-medium">Clase ABC:</span>
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="bg-transparent text-slate-200 text-xs font-semibold focus:outline-none cursor-pointer"
-            >
-              <option value="ALL" className="bg-slate-800">Todas</option>
-              <option value="A" className="bg-slate-800">Clase A</option>
-              <option value="B" className="bg-slate-800">Clase B</option>
-              <option value="C" className="bg-slate-800">Clase C</option>
-            </select>
-          </div>
-
           <div className="flex items-center space-x-2 bg-slate-900/80 border border-slate-700 rounded-xl px-3 py-1.5">
             <span className="text-xs text-slate-400 font-medium">Estado:</span>
             <select
@@ -138,7 +119,7 @@ export default function InventoryTable({ references, stats, onUploadExcel, loadi
                   </div>
                 </th>
                 <th onClick={() => handleSort('category')} className="py-4 px-6 cursor-pointer hover:text-slate-200 transition-colors text-center">
-                  <span>Clase ABC</span>
+                  <span>Categoría</span>
                 </th>
                 <th onClick={() => handleSort('location')} className="py-4 px-6 cursor-pointer hover:text-slate-200 transition-colors">
                   <span>Ubicación</span>
@@ -180,16 +161,8 @@ export default function InventoryTable({ references, stats, onUploadExcel, loadi
                         {item.description}
                       </td>
                       <td className="py-4 px-6 text-center">
-                        <span
-                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
-                            item.category === 'A'
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                              : item.category === 'B'
-                              ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
-                              : 'bg-slate-700/50 text-slate-300 border border-slate-600'
-                          }`}
-                        >
-                          Clase {item.category}
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/30">
+                          {item.category}
                         </span>
                       </td>
                       <td className="py-4 px-6 text-slate-300 font-mono text-xs">
