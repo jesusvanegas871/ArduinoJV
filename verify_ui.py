@@ -1,42 +1,31 @@
-from playwright.sync_api import sync_playwright
+import asyncio
+from playwright.async_api import async_playwright
 
-def run_cuj(page):
-    page.goto("http://localhost:3000")
-    page.wait_for_timeout(1000)
+async def main():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page(viewport={"width": 1400, "height": 900})
 
-    # Click on Inventory tab
-    page.get_by_text("Maestro de Inventario").click()
-    page.wait_for_timeout(1000)
+        # Load main app
+        await page.goto("http://localhost:3000")
+        await page.wait_for_timeout(3000)
 
-    # Filter by Class A
-    page.get_by_role("combobox").first.select_option("A")
-    page.wait_for_timeout(1000)
+        # Click Optimización Logística header button
+        await page.get_by_role("button", name="Optimización Logística").click()
+        await page.wait_for_timeout(2000)
 
-    # Switch to Weekly Cycle Count tab
-    page.get_by_text("Conteo Cíclico Semanal").click()
-    page.wait_for_timeout(1000)
+        # Take screenshot of Task 5 - Distribution Routes
+        await page.screenshot(path="routes_ui.png", full_page=True)
+        print("Captured routes_ui.png")
 
-    # Click Generate Week 1 button
-    page.get_by_role("button", name="Generar Semana Aleatoria").click()
-    page.wait_for_timeout(1500)
+        # Click Picking Inteligente sub-tab
+        await page.get_by_role("button", name="Picking Inteligente (Tarea 6)").click()
+        await page.wait_for_timeout(2000)
 
-    # Click Simulate Year button
-    page.get_by_role("button", name="Simular Año Completo").click()
-    page.wait_for_timeout(2000)
+        # Take screenshot of Task 6 - Smart Picking Layout
+        await page.screenshot(path="picking_ui.png", full_page=True)
+        print("Captured picking_ui.png")
 
-    # Screenshot the resulting state
-    page.screenshot(path="/home/jules/verification/screenshots/wms_cycle_counting.png")
-    page.wait_for_timeout(1000)
+        await browser.close()
 
-if __name__ == "__main__":
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            record_video_dir="/home/jules/verification/videos"
-        )
-        page = context.new_page()
-        try:
-            run_cuj(page)
-        finally:
-            context.close()
-            browser.close()
+asyncio.run(main())
