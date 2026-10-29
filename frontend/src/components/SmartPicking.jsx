@@ -1,19 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Boxes,
-  Layers,
   Plus,
   Play,
   Square,
-  CheckCircle2,
   AlertTriangle,
-  Download,
-  Lock,
   Sparkles,
   Edit3,
   Cpu,
   Zap,
-  Radio,
   ArrowUp,
   ArrowDown,
   ArrowLeft,
@@ -21,10 +16,14 @@ import {
   RotateCcw,
   ShieldAlert,
   Trash2,
-  ArrowUpRight,
   Navigation,
-  MapPin,
-  RefreshCw
+  RefreshCw,
+  Volume2,
+  Radio,
+  CheckCircle2,
+  XCircle,
+  Send,
+  FastForward
 } from 'lucide-react';
 
 import WarehouseCanvas from './WarehouseCanvas';
@@ -75,15 +74,30 @@ export default function SmartPicking() {
   const [isSimulating, setIsSimulating] = useState(false);
   const simulationTimerRef = useRef(null);
 
+  // AGV Real Hardware Connection State (USB Serial Arduino)
+  const [agvPorts, setAgvPorts] = useState([]);
+  const [selectedPort, setSelectedPort] = useState('');
+  const [agvHardwareStatus, setAgvHardwareStatus] = useState({
+    connected: false,
+    port: null,
+    mode: 'IDLE',
+    last_event: 'NINGUNO'
+  });
+  const [agvSpeed, setAgvSpeed] = useState(180);
+  const [hardwareBusy, setHardwareBusy] = useState(false);
+  const [hardwareMsg, setHardwareMsg] = useState(null);
+
   // Helper for adding logs with timestamp
   const addLog = (message, type = 'INFO') => {
     const timestamp = new Date().toLocaleTimeString();
     setLogs((prev) => [...prev, { timestamp, message, type }]);
   };
 
-  // Initial setup: Fetch layout & default rack route
+  // Initial setup: Fetch layout, default route & serial ports
   useEffect(() => {
     fetchExampleLayout();
+    fetchAgvPorts();
+    fetchAgvHardwareStatus();
     addLog('Sistema WMS Logística 2026 inicializado. Carro AGV preparado en Zona Inferior de Entrada/Despacho (x:0, y:0).', 'INFO');
   }, []);
 
@@ -101,6 +115,212 @@ export default function SmartPicking() {
       setLoading(false);
     }
   };
+
+  // Hardware Serial API Calls
+  const fetchAgvPorts = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/ports`);
+      if (res.ok) {
+        const data = await res.json();
+        setAgvPorts(data.ports || []);
+        if (data.ports && data.ports.length > 0 && !selectedPort) {
+          setSelectedPort(data.ports[0].port);
+        }
+      }
+    } catch (err) {
+      console.error('Error al consultar puertos serie:', err);
+    }
+  };
+
+  const fetchAgvHardwareStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setAgvHardwareStatus(data.status || {});
+      }
+    } catch (err) {
+      console.error('Error al consultar estado del AGV real:', err);
+    }
+  };
+
+  const handleConnectAgv = async () => {
+    if (!selectedPort) {
+      setHardwareMsg('Por favor seleccione un puerto serie.');
+      return;
+    }
+    setHardwareBusy(true);
+    setHardwareMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: selectedPort, baudrate: 115200 })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setHardwareMsg(data.message);
+        addLog(`🔌 CONEXIÓN AGV REAL: ${data.message}`, 'SUCCESS');
+        await fetchAgvHardwareStatus();
+      } else {
+        const err = data.detail || data.message || 'Error al conectar puerto serie.';
+        setHardwareMsg(err);
+        addLog(`Error de conexión serial: ${err}`, 'ERROR');
+      }
+    } catch (err) {
+      setHardwareMsg('Error de conexión con el backend.');
+    } finally {
+      setHardwareBusy(false);
+    }
+  };
+
+  const handleDisconnectAgv = async () => {
+    setHardwareBusy(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/disconnect`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setHardwareMsg(data.message);
+        addLog('🔌 DESCONEXIÓN AGV REAL: Puerto serie cerrado.', 'WARN');
+        await fetchAgvHardwareStatus();
+      }
+    } catch (err) {
+      console.error('Error al desconectar AGV:', err);
+    } finally {
+      setHardwareBusy(false);
+    }
+  };
+
+  const handleSendManualCommand = async (command) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command, speed: agvSpeed })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        addLog(`🎮 Comando Manual AGV Real: M:${command} (Velocidad: ${agvSpeed})`, 'ACTION');
+        fetchAgvHardwareStatus();
+      }
+    } catch (err) {
+      console.error('Error al enviar comando manual:', err);
+    }
+  };
+
+  const handleBeepAgv = async (duration_ms = 300) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/beep`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ duration_ms })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (soundEnabled) SoundEffects.playArrivalYellow();
+        addLog(`🔊 Pitido activado en AGV Real (${duration_ms} ms).`, 'SUCCESS');
+      }
+    } catch (err) {
+      console.error('Error al emitir pitido:', err);
+    }
+  };
+
+  const handleSendRouteToAgv = async () => {
+    if (!routeResult || !routeResult.route_waypoints || routeResult.route_waypoints.length === 0) {
+      setHardwareMsg('No hay una ruta calculada para enviar.');
+      return;
+    }
+    setHardwareBusy(true);
+    setHardwareMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/route/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ route_waypoints: routeResult.route_waypoints })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setHardwareMsg(data.message);
+        addLog(`🚀 RUTA ENVIADA AL AGV REAL: Comandos [${data.commands.join(', ')}]`, 'ACTION');
+        fetchAgvHardwareStatus();
+      } else {
+        const err = data.detail || data.message || 'Error al enviar ruta al AGV.';
+        setHardwareMsg(err);
+        addLog(`Error al enviar ruta al AGV Real: ${err}`, 'ERROR');
+      }
+    } catch (err) {
+      setHardwareMsg('Error al comunicar con el backend.');
+    } finally {
+      setHardwareBusy(false);
+    }
+  };
+
+  const handleContinueAgvRoute = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/route/continue`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        addLog('▶️ Reanudando ruta en AGV Real (Comando CONTINUE sent).', 'ACTION');
+        fetchAgvHardwareStatus();
+      }
+    } catch (err) {
+      console.error('Error en CONTINUE:', err);
+    }
+  };
+
+  const handleStopAgvRoute = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agv/route/stop`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        addLog('🛑 Ruta detenida en AGV Real (Comando STOP sent).', 'WARN');
+        fetchAgvHardwareStatus();
+      }
+    } catch (err) {
+      console.error('Error en STOP:', err);
+    }
+  };
+
+  // Keyboard Event Handlers for Manual Control (WASD / Arrow Keys)
+  const isKeyPressedRef = useRef(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ignorar si el usuario está escribiendo en un input
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      if (!agvHardwareStatus.connected) return;
+      if (isKeyPressedRef.current) return;
+
+      let cmd = null;
+      if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') cmd = 'F';
+      else if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') cmd = 'B';
+      else if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') cmd = 'L';
+      else if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') cmd = 'R';
+
+      if (cmd) {
+        isKeyPressedRef.current = true;
+        handleSendManualCommand(cmd);
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      if (!agvHardwareStatus.connected) return;
+
+      const keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D'];
+      if (keys.includes(e.key)) {
+        isKeyPressedRef.current = false;
+        handleSendManualCommand('S');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [agvHardwareStatus.connected, agvSpeed]);
 
   // Fetch or calculate route when rack sequence or blocked aisles change
   const handleCalculateRoute = async (sequenceToUse = rackSequence) => {
@@ -268,7 +488,7 @@ export default function SmartPicking() {
     runWaypointStep(0);
   };
 
-  // Manual D-Pad Movement
+  // Manual D-Pad Movement for Virtual Canvas AGV
   const handleManualMove = (dx, dy, dirName) => {
     if (controlMode !== 'manual') return;
 
@@ -284,7 +504,7 @@ export default function SmartPicking() {
     }));
 
     if (soundEnabled) SoundEffects.playManualStep();
-    addLog(`Control Manual AGV: Movimiento ${dirName} a posición (x:${newX}, y:${newY}).`, 'MANUAL');
+    addLog(`Control Manual AGV Virtual: Movimiento ${dirName} a posición (x:${newX}, y:${newY}).`, 'MANUAL');
   };
 
   const handleManualPickAction = () => {
@@ -378,7 +598,7 @@ export default function SmartPicking() {
             <div>
               <h2 className="text-xl font-black text-white">Panel de Control & Simulación AGV — WMS 2026</h2>
               <p className="text-xs text-slate-400">
-                Simulación interactiva completa de un carro autónomo (AGV) sobre coordenadas de racks y niveles de prioridad.
+                Simulación interactiva y control por hardware serie de un carro autónomo (AGV seguidor de línea).
               </p>
             </div>
           </div>
@@ -413,6 +633,225 @@ export default function SmartPicking() {
             <span>Crear mi Layout</span>
           </button>
         </div>
+      </div>
+
+      {/* PANEL DE CONEXIÓN Y CONTROL DEL AGV REAL (ARDUINO USB SERIAL) */}
+      <div className="bg-slate-800 border border-emerald-500/30 p-5 rounded-3xl shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-700/60 pb-3">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 bg-emerald-600/20 text-emerald-400 rounded-2xl border border-emerald-500/30">
+              <Radio className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-white flex items-center gap-2">
+                Conexión AGV Real (Arduino USB Serial)
+              </h3>
+              <p className="text-xs text-slate-400">
+                Conecte el carrito seguidor de línea por USB y contrólelo en modo manual o mediante rutas.
+              </p>
+            </div>
+          </div>
+
+          {/* Connection Status Indicator */}
+          <div className="flex items-center space-x-3 bg-slate-900 px-4 py-2 rounded-2xl border border-slate-700">
+            <span className={`w-3 h-3 rounded-full ${agvHardwareStatus.connected ? 'bg-emerald-500 animate-ping' : 'bg-slate-500'}`} />
+            <div className="text-xs">
+              <span className="text-slate-400 block font-bold">Estado Hardware:</span>
+              <span className={`font-black ${agvHardwareStatus.connected ? 'text-emerald-400' : 'text-slate-400'}`}>
+                {agvHardwareStatus.connected ? `CONECTADO (${agvHardwareStatus.port})` : 'DESCONECTADO'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Port Selector and Connect Row */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+          <div className="md:col-span-2 space-y-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+              Puerto Serie (USB Arduino)
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={selectedPort}
+                onChange={(e) => setSelectedPort(e.target.value)}
+                disabled={agvHardwareStatus.connected}
+                className="flex-1 bg-slate-900 border border-slate-700 text-xs font-bold text-white rounded-xl p-2.5 outline-none focus:border-emerald-500 disabled:opacity-50"
+              >
+                {agvPorts.length === 0 ? (
+                  <option value="">No hay puertos detectados</option>
+                ) : (
+                  agvPorts.map((p, idx) => (
+                    <option key={idx} value={p.port}>
+                      {p.port} — {p.description}
+                    </option>
+                  ))
+                )}
+              </select>
+              <button
+                onClick={fetchAgvPorts}
+                disabled={hardwareBusy || agvHardwareStatus.connected}
+                className="p-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl border border-slate-600 disabled:opacity-50"
+                title="Actualizar lista de puertos"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div>
+            {!agvHardwareStatus.connected ? (
+              <button
+                onClick={handleConnectAgv}
+                disabled={hardwareBusy || !selectedPort}
+                className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl shadow-md shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <CheckCircle2 className="w-4 h-4" /> Conectar Arduino
+              </button>
+            ) : (
+              <button
+                onClick={handleDisconnectAgv}
+                disabled={hardwareBusy}
+                className="w-full py-2.5 px-4 bg-rose-600 hover:bg-rose-500 text-white text-xs font-black rounded-xl shadow-md shadow-rose-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <XCircle className="w-4 h-4" /> Desconectar
+              </button>
+            )}
+          </div>
+
+          <div>
+            <button
+              onClick={() => handleBeepAgv(300)}
+              disabled={!agvHardwareStatus.connected}
+              className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-500 text-white text-xs font-black rounded-xl shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <Volume2 className="w-4 h-4" /> Activar Pitido (Buzzer)
+            </button>
+          </div>
+        </div>
+
+        {/* Feedback message banner */}
+        {hardwareMsg && (
+          <div className="p-3 bg-slate-900 border border-slate-700 text-xs font-bold text-emerald-300 rounded-xl flex items-center gap-2">
+            <Zap className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <span>{hardwareMsg}</span>
+          </div>
+        )}
+
+        {/* REAL HARDWARE MANUAL CONTROLS & ROUTE ACTIONS (Only when connected) */}
+        {agvHardwareStatus.connected && (
+          <div className="bg-slate-900/80 p-4 rounded-2xl border border-slate-700 space-y-4">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4 border-b border-slate-700/60 pb-3">
+              <div>
+                <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-emerald-400" /> Controles Manuales en Tiempo Real (Teclado WASD / Flechas)
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  Presione una tecla para enviar comando y suelte para detener ('S'). Failsafe activo a 500ms.
+                </p>
+              </div>
+
+              {/* Speed Slider */}
+              <div className="flex items-center space-x-3 bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-700">
+                <span className="text-[11px] font-bold text-slate-300">Velocidad Base:</span>
+                <input
+                  type="range"
+                  min="80"
+                  max="255"
+                  value={agvSpeed}
+                  onChange={(e) => setAgvSpeed(Number(e.target.value))}
+                  className="w-24 accent-emerald-500"
+                />
+                <span className="text-xs font-black text-emerald-400">{agvSpeed}</span>
+              </div>
+            </div>
+
+            {/* D-Pad Manual Control Buttons */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+              {/* On-screen D-Pad */}
+              <div className="grid grid-cols-3 gap-1.5 w-36 h-36 bg-slate-950 p-2 rounded-2xl border border-slate-800">
+                <div />
+                <button
+                  onMouseDown={() => handleSendManualCommand('F')}
+                  onMouseUp={() => handleSendManualCommand('S')}
+                  className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl flex items-center justify-center font-bold shadow-md"
+                  title="Adelante (F)"
+                >
+                  <ArrowUp className="w-5 h-5" />
+                </button>
+                <div />
+
+                <button
+                  onMouseDown={() => handleSendManualCommand('L')}
+                  onMouseUp={() => handleSendManualCommand('S')}
+                  className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl flex items-center justify-center font-bold shadow-md"
+                  title="Izquierda (L)"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => handleSendManualCommand('S')}
+                  className="bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase shadow-md"
+                  title="Parar (S)"
+                >
+                  STOP
+                </button>
+                <button
+                  onMouseDown={() => handleSendManualCommand('R')}
+                  onMouseUp={() => handleSendManualCommand('S')}
+                  className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl flex items-center justify-center font-bold shadow-md"
+                  title="Derecha (R)"
+                >
+                  <ArrowRight className="w-5 h-5" />
+                </button>
+
+                <div />
+                <button
+                  onMouseDown={() => handleSendManualCommand('B')}
+                  onMouseUp={() => handleSendManualCommand('S')}
+                  className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl flex items-center justify-center font-bold shadow-md"
+                  title="Atrás (B)"
+                >
+                  <ArrowDown className="w-5 h-5" />
+                </button>
+                <div />
+              </div>
+
+              {/* Hardware Route Dispatch Commands */}
+              <div className="flex-1 space-y-2 border-l border-slate-700/60 pl-4">
+                <h5 className="text-xs font-black text-white uppercase tracking-wider">
+                  Ejecución de Ruta en el AGV Real
+                </h5>
+                <p className="text-[11px] text-slate-400">
+                  Envíe los waypoints calculados al microcontrolador para inicio autónomo seguidor de línea.
+                </p>
+
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <button
+                    onClick={handleSendRouteToAgv}
+                    disabled={hardwareBusy || !routeResult}
+                    className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-blue-500/20 flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" /> Enviar ruta al AGV Real
+                  </button>
+
+                  <button
+                    onClick={handleContinueAgvRoute}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center gap-1.5"
+                  >
+                    <FastForward className="w-4 h-4" /> Continuar (Tras PICK)
+                  </button>
+
+                  <button
+                    onClick={handleStopAgvRoute}
+                    className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-rose-500/20 flex items-center gap-1.5"
+                  >
+                    <Square className="w-4 h-4 fill-white" /> Parar / Abortar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* CUSTOM LAYOUT DESIGNER DRAWER */}
