@@ -8,7 +8,7 @@ export default function WarehouseCanvas({
   onToggleBlockAisle,
   selectedLocation,
   onSelectLocation,
-  agvPos = { x: 2, y: 0, status: 'IDLE', mode: 'auto', currentWaypointIdx: 0, location: null },
+  agvPos = { x: 0, y: 0, status: 'IDLE', mode: 'auto', currentWaypointIdx: 0, location: null },
   isSimulating = false,
   soundEnabled = true,
   onToggleSound
@@ -20,6 +20,7 @@ export default function WarehouseCanvas({
   const bottomCorridorRef = useRef(null);
 
   const [coordsMap, setCoordsMap] = useState({});
+  const [laneXs, setLaneXs] = useState({});
 
   // Group locations by Aisle for organized rendering
   const aisles = [1, 2, 3, 4];
@@ -62,46 +63,55 @@ export default function WarehouseCanvas({
     if (containerRect.width === 0 || containerRect.height === 0) return;
 
     const newMap = {};
+    const lanes = {};
 
-    // Top Corridor (y=16) & Bottom Corridor (y=0) centers per Aisle (x=2, 5, 8, 11)
+    // Los racks de cada pasillo estan pegados: el AGV NO puede pasar entre ellos.
+    // Solo circula por carriles laterales: carril 0 (izq. del Pasillo 1), carriles 1-3
+    // (entre bloques) y carril 4 (der. del Pasillo 4), mas los corredores superior/inferior.
     const topRect = topCorridorRef.current?.getBoundingClientRect();
     const bottomRect = bottomCorridorRef.current?.getBoundingClientRect();
+    const topCorridorGridY = 9;
+    const topY = topRect
+      ? ((topRect.top + topRect.height / 2) - containerRect.top) / containerRect.height * 100
+      : 6;
+    const bottomY = bottomRect
+      ? ((bottomRect.top + bottomRect.height / 2) - containerRect.top) / containerRect.height * 100
+      : 94;
 
-    aisles.forEach((aNum) => {
-      const aisleEl = aisleRefs.current[aNum];
-      if (aisleEl) {
-        const aRect = aisleEl.getBoundingClientRect();
-        const centerX = ((aRect.left + aRect.width / 2) - containerRect.left) / containerRect.width * 100;
+    const aisleRects = aisles.map((aNum) => aisleRefs.current[aNum]?.getBoundingClientRect());
+    if (aisleRects.some((r) => !r)) return;
 
-        // Corridor Y coordinates
-        let topY = 6;
-        let bottomY = 94;
-
-        if (topRect) {
-          topY = ((topRect.top + topRect.height / 2) - containerRect.top) / containerRect.height * 100;
-        }
-        if (bottomRect) {
-          bottomY = ((bottomRect.top + bottomRect.height / 2) - containerRect.top) / containerRect.height * 100;
-        }
-
-        // Key coordinates for aisle x with y=0 and y=16
-        const xGrid = aNum === 1 ? 2 : (aNum === 2 ? 5 : (aNum === 3 ? 8 : 11));
-        newMap[`${xGrid},0`] = { x: centerX, y: bottomY };
-        newMap[`${xGrid},16`] = { x: centerX, y: topY };
-      }
+    const gapPx = aisleRects[1].left - aisleRects[0].right;
+    const laneCentersPx = [
+      aisleRects[0].left - gapPx / 2,
+      ...[0, 1, 2].map((i) => (aisleRects[i].right + aisleRects[i + 1].left) / 2),
+      aisleRects[3].right + gapPx / 2,
+    ];
+    laneCentersPx.forEach((px, k) => {
+      const xPct = ((px - containerRect.left) / containerRect.width) * 100;
+      lanes[k] = xPct;
+      newMap[`${k * 3},0`] = { x: xPct, y: bottomY };
+      newMap[`${k * 3},${topCorridorGridY}`] = { x: xPct, y: topY };
     });
 
-    // Exact center coordinates for each rack (x, y)
+    // Cada parada vive en (carril, fila). Su Y es el centro vertical de los racks
+    // que se sirven desde ese carril en esa fila (uno o dos, uno a cada lado).
+    const acc = {};
     locationList.forEach((loc) => {
-      const rackEl = rackRefs.current[loc.id || loc.number];
-      if (rackEl) {
-        const rRect = rackEl.getBoundingClientRect();
-        const rX = ((rRect.left + rRect.width / 2) - containerRect.left) / containerRect.width * 100;
-        const rY = ((rRect.top + rRect.height / 2) - containerRect.top) / containerRect.height * 100;
-        newMap[`${loc.grid_x},${loc.grid_y}`] = { x: rX, y: rY };
-      }
+      const rect = rackRefs.current[loc.id || loc.number]?.getBoundingClientRect();
+      if (!rect) return;
+      const key = `${loc.grid_x},${loc.grid_y}`;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(rect.top + rect.height / 2);
+    });
+    Object.entries(acc).forEach(([key, ys]) => {
+      const laneIdx = Math.round(Number(key.split(',')[0]) / 3);
+      const avg = ys.reduce((a, b) => a + b, 0) / ys.length;
+      if (lanes[laneIdx] === undefined) return;
+      newMap[key] = { x: lanes[laneIdx], y: ((avg - containerRect.top) / containerRect.height) * 100 };
     });
 
+    setLaneXs(lanes);
     setCoordsMap(newMap);
   };
 
@@ -122,7 +132,7 @@ export default function WarehouseCanvas({
       window.removeEventListener('resize', handleResize);
       observer.disconnect();
     };
-  }, [layoutData]);
+  }, [layoutData, routeWaypoints]);
 
   /**
    * Returns exact coordinate in percentage.
@@ -134,23 +144,44 @@ export default function WarehouseCanvas({
       return coordsMap[key];
     }
 
-    // Mathematical fallback mapping
-    let pctX = 12.5;
-    if (gridX <= 3) pctX = 12.5;
-    else if (gridX <= 6) pctX = 37.5;
-    else if (gridX <= 9) pctX = 62.5;
-    else pctX = 87.5;
+    // Mathematical fallback mapping (5 carriles: x = 0,3,6,9,12)
+    const pctX = 8 + (gridX / 3) * 21;
 
     let pctY = 92;
     if (gridY === 0) pctY = 94;
-    else if (gridY === 16) pctY = 6;
+    else if (gridY === 9) pctY = 6;
     else {
       pctY = 88 - (gridY * 5.2);
     }
     return { x: pctX, y: pctY };
   };
 
-  // Build SVG Path Data string connecting waypoints orthogonally
+  // Short approach segments: from the lane to the face of the rack on that side.
+  // The vehicle never enters the rack block; the lane is always outside it.
+  const getPickApproachSegment = (wp) => {
+    if (wp?.type !== 'PICK' || !containerRef.current) return null;
+    const loc = locationsMap[String(wp.location)];
+    if (!loc) return null;
+    const rackEl = rackRefs.current[loc.id || loc.number];
+    if (!rackEl) return null;
+
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const rackRect = rackEl.getBoundingClientRect();
+    const lanePoint = getCanvasCoordsPct(wp.x, wp.y);
+    const lanePx = containerRect.left + (lanePoint.x / 100) * containerRect.width;
+    const rackCenterX = rackRect.left + rackRect.width / 2;
+    // Lane to the left of the rack -> touch its left face; otherwise its right face.
+    const rackEdgeX = lanePx < rackCenterX ? rackRect.left : rackRect.right;
+
+    return {
+      x1: lanePoint.x,
+      y1: lanePoint.y,
+      x2: ((rackEdgeX - containerRect.left) / containerRect.width) * 100,
+      y2: lanePoint.y,
+    };
+  };
+
+  // Build SVG Path Data string connecting aisle-centre waypoints orthogonally.
   const svgPathD = useMemo(() => {
     if (!routeWaypoints || routeWaypoints.length < 2) return '';
     return routeWaypoints
@@ -186,11 +217,11 @@ export default function WarehouseCanvas({
               {layoutData.name || 'Layout de Almacén WMS 2026'}
             </h3>
             <span className="bg-blue-500/10 text-blue-400 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-blue-500/30 uppercase tracking-wide">
-              Navegación Industrial Neón Precision
+              Carriles laterales · geometría física
             </span>
           </div>
           <p className="text-xs text-slate-400 font-medium mt-1">
-            Mapeo vehicular estricto por pasillos (cero cruces por centro de racks) y sincronización geométrica exacta.
+            Los racks están juntos: el AGV solo circula por los carriles laterales de cada bloque y los corredores perimetrales, y recoge desde el carril de su lado.
           </p>
         </div>
 
@@ -253,7 +284,7 @@ export default function WarehouseCanvas({
       {/* Interactive Layout Graphic Canvas */}
       <div
         ref={containerRef}
-        className="relative bg-slate-950 p-6 rounded-2xl border border-slate-800 overflow-hidden min-w-[700px] select-none"
+        className="relative bg-slate-950 p-5 rounded-2xl border border-slate-800 overflow-hidden min-w-[900px] select-none"
       >
         {/* SVG Neon Industrial Route Overlay Layer */}
         <svg
@@ -261,64 +292,56 @@ export default function WarehouseCanvas({
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
         >
-          <defs>
-            {/* High-Tech Industrial Neon Gradient */}
-            <linearGradient id="neonGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#38bdf8" />
-              <stop offset="50%" stopColor="#818cf8" />
-              <stop offset="100%" stopColor="#c084fc" />
-            </linearGradient>
-
-            {/* Glowing Drop Shadow Filter */}
-            <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="0.8" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-
-          {/* Animated Trajectory Path Line */}
-          {svgPathD && (
-            <>
-              {/* Layer 1: Wide Background Glow Stroke */}
-              <path
-                d={svgPathD}
-                fill="none"
-                stroke="#0284c7"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+          {/* Guias de carriles vehiculares (fuera de los bloques de racks) */}
+          {Object.values(laneXs).map((lx, i) => {
+            const top = getCanvasCoordsPct(i * 3, 9);
+            const bottom = getCanvasCoordsPct(i * 3, 0);
+            return (
+              <line
+                key={`lane-${i}`}
+                x1={lx}
+                y1={top.y}
+                x2={lx}
+                y2={bottom.y}
+                stroke="#6366f1"
+                strokeWidth="0.25"
+                strokeDasharray="1 1"
                 opacity="0.35"
-                filter="url(#neonGlow)"
               />
+            );
+          })}
 
-              {/* Layer 2: Main Solid Neon Line */}
-              <path
-                d={svgPathD}
-                fill="none"
-                stroke="url(#neonGradient)"
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                filter="url(#neonGlow)"
-              />
-
-              {/* Layer 3: Dynamic Animated Energy Flow Overlay */}
-              <path
-                d={svgPathD}
-                fill="none"
-                stroke="#ffffff"
-                strokeWidth="0.8"
-                strokeDasharray="1.5 2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="animate-pulse"
-                opacity="0.9"
-              />
-            </>
+          {/* Neutral industrial route: a single thin stroke, with no neon glow. */}
+          {svgPathD && (
+            <path
+              d={svgPathD}
+              fill="none"
+              stroke="#a8b3c2"
+              strokeWidth="0.45"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity="0.9"
+            />
           )}
+
+          {/* Picking approach marks: the line ends at each rack face, not inside it. */}
+          {routeWaypoints.filter((wp) => wp.type === 'PICK').map((wp, i) => {
+            const segment = getPickApproachSegment(wp);
+            if (!segment) return null;
+            return (
+              <line
+                key={`approach-${wp.step ?? i}-${wp.location}`}
+                x1={segment.x1}
+                y1={segment.y1}
+                x2={segment.x2}
+                y2={segment.y2}
+                stroke="#a8b3c2"
+                strokeWidth="0.4"
+                strokeLinecap="round"
+                opacity="0.8"
+              />
+            );
+          })}
 
           {/* Waypoint Nodes and Turn Indicators */}
           {routeWaypoints.map((wp, i) => {
@@ -334,9 +357,9 @@ export default function WarehouseCanvas({
                   cx={x}
                   cy={y}
                   r="0.8"
-                  fill="#818cf8"
-                  stroke="#38bdf8"
-                  strokeWidth="0.3"
+                  fill="#a8b3c2"
+                  stroke="#e2e8f0"
+                  strokeWidth="0.2"
                 />
               );
             }
@@ -348,10 +371,9 @@ export default function WarehouseCanvas({
                   cx={x}
                   cy={y}
                   r={isCurrentStop ? "2.4" : "1.2"}
-                  fill={isCurrentStop ? "#10b981" : "#818cf8"}
-                  stroke="#ffffff"
-                  strokeWidth="0.4"
-                  filter="url(#neonGlow)"
+                  fill={isCurrentStop ? "#10b981" : "#a8b3c2"}
+                  stroke="#e2e8f0"
+                  strokeWidth="0.25"
                 />
                 {isCurrentStop && (
                   <circle
@@ -369,7 +391,7 @@ export default function WarehouseCanvas({
           })}
         </svg>
 
-        {/* TOP PERIMETRAL CORRIDOR (y=16) */}
+        {/* TOP PERIMETRAL CORRIDOR (y=9 in the route graph) */}
         <div
           ref={topCorridorRef}
           className="w-full bg-slate-900/60 border border-indigo-500/30 rounded-xl py-2 px-4 mb-4 flex items-center justify-between text-[10px] text-indigo-300 font-extrabold uppercase tracking-widest border-dashed"
@@ -384,7 +406,7 @@ export default function WarehouseCanvas({
         </div>
 
         {/* 4 Aisles Grid Layout with Central Aisles */}
-        <div className="grid grid-cols-4 gap-6 my-2">
+        <div className="grid grid-cols-4 gap-8 my-2 px-4">
           {aisles.map((aNum) => {
             const aisleName = `Pasillo ${aNum}`;
             const isBlocked = blockedAisles.includes(aisleName);
@@ -394,7 +416,7 @@ export default function WarehouseCanvas({
               <div
                 key={aNum}
                 ref={(el) => (aisleRefs.current[aNum] = el)}
-                className={`relative rounded-2xl p-3 border transition-all ${
+                className={`relative rounded-2xl p-2.5 border transition-all ${
                   isBlocked
                     ? 'bg-rose-950/20 border-rose-500/50'
                     : 'bg-slate-900/60 border-slate-800/80 shadow-lg'
@@ -414,7 +436,7 @@ export default function WarehouseCanvas({
                 </div>
 
                 {/* Rack Locations Grid */}
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-2 gap-x-1 gap-y-1.5">
                   {locs.map((loc) => {
                     const pickOrders = pickOrderMap[String(loc.number)];
                     const isSelected = selectedLocation && selectedLocation.id === String(loc.number);
@@ -443,7 +465,7 @@ export default function WarehouseCanvas({
                         key={loc.id}
                         ref={(el) => (rackRefs.current[loc.id || loc.number] = el)}
                         onClick={() => onSelectLocation && onSelectLocation(loc)}
-                        className={`relative p-3 rounded-xl border text-left transition-all duration-300 hover:scale-[1.03] ${bgColor} ${
+                        className={`relative p-2.5 rounded-xl border text-left transition-all duration-300 hover:scale-[1.02] ${bgColor} ${
                           isSelected ? 'ring-2 ring-blue-400 shadow-lg' : ''
                         } ${
                           isPickActive
@@ -561,7 +583,7 @@ export default function WarehouseCanvas({
             <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap bg-slate-900 text-white text-[9px] font-black px-2 py-0.5 rounded-lg border border-slate-700 shadow-2xl flex items-center gap-1 z-50">
               <span className={`w-1.5 h-1.5 rounded-full ${isSimulating ? 'bg-emerald-400' : 'bg-slate-400'}`} />
               {agvPos.status === 'MOVING'
-                ? 'TRÁNSITO POR PASILLO...'
+                ? 'TRÁNSITO POR CARRIL...'
                 : agvPos.status === 'STOPPED_PICKING'
                 ? `RECOGIDA ${currentWaypoint?.chosen_level ? `NIVEL ${currentWaypoint.chosen_level}` : ''}...`
                 : agvPos.status === 'COMPLETED'

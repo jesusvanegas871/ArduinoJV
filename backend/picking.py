@@ -17,12 +17,16 @@ YELLOW_LOCATIONS = {7, 21, 55}
 
 # Blueprint Physical Measurements (Metros)
 BLUEPRINT_PARAMS = {
-    "aisle_width_m": 1.0,           # Pasillos de 1m
-    "rack_separation_m": 2.4,       # Separación entre pasillos de racks = 2.4m (3 grid_x units)
-    "grid_x_unit_m": 0.8,           # 2.4m / 3 unidades = 0.8m por unidad x
-    "grid_y_unit_m": 1.0,           # Separación entre posiciones de rack = 1.0m por unidad y
-    "bottom_corridor_depth_m": 5.0, # Zona de salida/entrada inferior de 5m
-    "top_corridor_depth_m": 3.0,    # Zona de paso/tránsito superior de 3m
+    "aisle_width_m": 1.0,                 # Ancho libre de cada pasillo
+    "rack_pair_width_m": 2.1,             # Ancho CONJUNTO de los dos cubos del pasillo
+    "aisle_center_spacing_m": 3.1,        # 2.1 m de bloque de racks + 1.0 m de pasillo
+    "grid_x_unit_m": 3.1 / 3.0,           # X = carriles 0,3,6,9,12: 3 unidades = 3.1 m entre carriles
+    "rack_row_length_m": 2.4,             # Largo de cada cubo a lo largo del pasillo
+    "grid_y_unit_m": 2.4,                 # Distancia entre filas de cubos
+    "bottom_corridor_depth_m": 5.0,       # Profundidad física del corredor inferior
+    "top_corridor_depth_m": 3.0,          # Profundidad física del corredor superior
+    "rows_per_aisle": 8,                  # 15 ubicaciones por pasillo = 8 filas visuales
+    "top_corridor_grid_y": 9,             # Y lógico reservado para el corredor superior
 }
 
 
@@ -42,26 +46,39 @@ def build_example_layout() -> Dict[str, Any]:
             aisle_num = 1
             quadrant = "Q1 (Cuadrante Suroeste)"
             x_coord = 2
-            y_coord = loc_num
+            local_index = loc_num
             rack_id = f"R1-A{(loc_num % 2) + 1}"
         elif loc_num <= 30:
             aisle_num = 2
             quadrant = "Q2 (Cuadrante Noroeste)"
             x_coord = 5
-            y_coord = loc_num - 15
+            local_index = loc_num - 15
             rack_id = f"R2-B{(loc_num % 2) + 1}"
         elif loc_num <= 45:
             aisle_num = 3
             quadrant = "Q3 (Cuadrante Noreste)"
             x_coord = 8
-            y_coord = loc_num - 30
+            local_index = loc_num - 30
             rack_id = f"R3-C{(loc_num % 2) + 1}"
         else:
             aisle_num = 4
             quadrant = "Q4 (Cuadrante Sureste)"
             x_coord = 11
-            y_coord = loc_num - 45
+            local_index = loc_num - 45
             rack_id = f"R4-D{(loc_num % 2) + 1}"
+
+        # Two neighboring rack cubes share one physical row along the aisle.
+        # Their route waypoint is on the aisle centreline, never at a rack centre.
+        y_coord = ((local_index - 1) // 2) + 1
+
+        # Los racks de un pasillo estan pegados (sin espacio de paso). El AGV
+        # solo circula por los CARRILES laterales que rodean cada bloque:
+        #   carril 0 | Pasillo 1 | carril 1 | Pasillo 2 | carril 2 | ... | carril 4
+        # Columna izquierda (indice local impar)  -> se recoge desde el carril oeste.
+        # Columna derecha   (indice local par)    -> se recoge desde el carril este.
+        side = "W" if local_index % 2 == 1 else "E"
+        lane_index = (aisle_num - 1) if side == "W" else aisle_num
+        x_coord = lane_index * 3  # 3 unidades de grid = 3.1 m entre carriles
 
         # Structured color and level semantics
         if loc_num in ORANGE_LOCATIONS:
@@ -103,13 +120,15 @@ def build_example_layout() -> Dict[str, Any]:
             "description": description,
             "grid_x": x_coord,
             "grid_y": y_coord,
+            "side": side,
+            "lane": lane_index,
             "assigned_skus": []
         }
 
     # Standard exit points at bottom
     exits = [
-        {"id": "EXIT-1", "name": "Salida / Despacho Inferior Izquierdo", "grid_x": 2, "grid_y": 0},
-        {"id": "EXIT-2", "name": "Salida / Despacho Inferior Derecho", "grid_x": 8, "grid_y": 0}
+        {"id": "EXIT-1", "name": "Salida / Despacho Inferior Izquierdo", "grid_x": 0, "grid_y": 0},
+        {"id": "EXIT-2", "name": "Salida / Despacho Inferior Derecho", "grid_x": 6, "grid_y": 0}
     ]
 
     return {
@@ -118,7 +137,7 @@ def build_example_layout() -> Dict[str, Any]:
         "is_custom": False,
         "total_locations": total_locations,
         "aisles_count": 4,
-        "grid_dimensions": {"rows": 16, "cols": 14},
+        "grid_dimensions": {"rows": BLUEPRINT_PARAMS["top_corridor_grid_y"], "cols": 13, "lanes": 5},
         "exits": exits,
         "locations": locations
     }
@@ -234,7 +253,10 @@ class SmartPickingEngine:
             loc_data = loc_map[loc_id]
 
             if loc_data.get("aisle") in blocked_aisles_set:
-                warnings.append(f"El pasillo '{loc_data.get('aisle')}' para la ubicación #{loc_num} está bloqueado.")
+                errors.append(
+                    f"No se puede recoger la ubicación #{loc_num}: "
+                    f"el pasillo '{loc_data.get('aisle')}' está bloqueado."
+                )
 
             levels_available = loc_data.get("levels", [1])
             color = loc_data.get("color", "slate")
@@ -322,6 +344,11 @@ class SmartPickingEngine:
         original_distance_m = self._calculate_route_distance(original_sequence, blocked_aisles_set)
 
         optimized_sequence = self._sort_picking_s_shape(stops, blocked_aisles_set)
+        optimization_info = getattr(self, "_last_optimization_metadata", {
+            "is_globally_optimal": False,
+            "method": "Heurística S-Shape",
+            "optimized_positions": 0,
+        })
 
         for idx, item in enumerate(optimized_sequence, start=1):
             item["pick_order"] = idx
@@ -340,7 +367,13 @@ class SmartPickingEngine:
                 "original_sequence_distance_m": round(original_distance_m, 1),
                 "optimized_sequence_distance_m": round(optimized_distance_m, 1),
                 "distance_saved_m": round(max(0, original_distance_m - optimized_distance_m), 1),
-                "methodology_disclaimer": "Recorrido S-Shape restringido estrictamente a pasillos (sin modo vuelo) basado en plano real."
+                "is_globally_optimal": optimization_info["is_globally_optimal"],
+                "optimization_method": optimization_info["method"],
+                "optimized_positions": optimization_info["optimized_positions"],
+                "methodology_disclaimer": (
+                    "Distancia Manhattan sobre el grafo físico de pasillos y corredores; "
+                    "el AGV circula solo por carriles laterales y corredores perimetrales; nunca atraviesa los bloques de racks."
+                )
             },
             "route_waypoints": route_waypoints
         }
@@ -388,7 +421,10 @@ class SmartPickingEngine:
             loc_data = loc_map[loc_id]
 
             if loc_data.get("aisle") in blocked_aisles_set:
-                warnings.append(f"El pasillo '{loc_data.get('aisle')}' para la ubicación {loc_id} está bloqueado.")
+                errors.append(
+                    f"No se puede recoger el SKU '{sku}' en la ubicación {loc_id}: "
+                    f"el pasillo '{loc_data.get('aisle')}' está bloqueado."
+                )
 
             levels_available = loc_data.get("levels", [1])
             color = loc_data.get("color", "slate")
@@ -495,6 +531,11 @@ class SmartPickingEngine:
         original_distance_m = self._calculate_route_distance(original_sequence, blocked_aisles_set)
 
         optimized_sequence = self._sort_picking_s_shape(picking_items, blocked_aisles_set)
+        optimization_info = getattr(self, "_last_optimization_metadata", {
+            "is_globally_optimal": False,
+            "method": "Heurística S-Shape",
+            "optimized_positions": 0,
+        })
 
         for idx, item in enumerate(optimized_sequence, start=1):
             item["pick_order"] = idx
@@ -513,7 +554,13 @@ class SmartPickingEngine:
                 "original_sequence_distance_m": round(original_distance_m, 1),
                 "optimized_sequence_distance_m": round(optimized_distance_m, 1),
                 "distance_saved_m": round(max(0, original_distance_m - optimized_distance_m), 1),
-                "methodology_disclaimer": "Distancias reales basadas en medidas del plano con restricción de tránsito por pasillos (sin modo vuelo)."
+                "is_globally_optimal": optimization_info["is_globally_optimal"],
+                "optimization_method": optimization_info["method"],
+                "optimized_positions": optimization_info["optimized_positions"],
+                "methodology_disclaimer": (
+                    "Distancia sobre el grafo físico de pasillos/corredores; "
+                    "las ubicaciones de una misma fila comparten el punto de acceso del AGV."
+                )
             },
             "route_waypoints": route_waypoints
         }
@@ -523,29 +570,137 @@ class SmartPickingEngine:
         items: List[Dict[str, Any]],
         blocked_aisles: set
     ) -> List[Dict[str, Any]]:
+        """Optimize travel between physical aisle-row access points.
+
+        For up to 14 distinct access points, Held-Karp dynamic programming finds
+        the globally shortest closed route on the aisle/cross-corridor graph.
+        Larger layouts use a deterministic S-Shape fallback and are explicitly
+        marked as heuristic rather than falsely described as globally optimal.
         """
-        S-Shape Aisle Routing Heuristic:
-        Groups by Aisle. Alternates direction (ascending vs descending Y) per aisle.
-        Preserves level ordering (Level 1 before Level 2) at the same rack position.
-        """
-        aisles_map: Dict[int, List[Dict[str, Any]]] = {}
+        if not items:
+            self._last_optimization_metadata = {
+                "is_globally_optimal": True,
+                "method": "Ruta vacía",
+                "optimized_positions": 0,
+            }
+            return []
+
+        # Each pair of rack cubes is served from the same centreline point.
+        # Grouping the row avoids artificial travel between left/right cubes.
+        buckets: Dict[tuple, List[Dict[str, Any]]] = {}
         for item in items:
-            a_num = item["aisle_number"]
-            aisles_map.setdefault(a_num, []).append(item)
+            key = (int(item.get("grid_x", 0)), int(item.get("grid_y", 0)))
+            buckets.setdefault(key, []).append(item)
 
-        sorted_aisles = sorted(aisles_map.keys())
-        optimized_list = []
+        def item_order(item: Dict[str, Any]):
+            return (int(item.get("location_number", 0)), int(item.get("chosen_level", 1)))
 
-        for idx, a_num in enumerate(sorted_aisles):
-            aisle_items = aisles_map[a_num]
-            if idx % 2 == 0:
-                aisle_items.sort(key=lambda x: (x["grid_y"], x["chosen_level"]))
-            else:
-                aisle_items.sort(key=lambda x: (-x["grid_y"], x["chosen_level"]))
+        for bucket in buckets.values():
+            bucket.sort(key=item_order)
 
-            optimized_list.extend(aisle_items)
+        representatives = {
+            key: sorted(bucket, key=item_order)[0]
+            for key, bucket in buckets.items()
+        }
+        position_keys = list(buckets.keys())
+        n = len(position_keys)
+        origin = {
+            "grid_x": 0,
+            "grid_y": 0,
+            "aisle": "Pasillo 1",
+            "aisle_number": 1,
+        }
 
-        return optimized_list
+        def leg_distance(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+            return self._get_leg_path_and_distance(
+                int(a.get("grid_x", 0)), int(a.get("grid_y", 0)),
+                int(b.get("grid_x", 0)), int(b.get("grid_y", 0)),
+                str(a.get("aisle", "Pasillo 1")), str(b.get("aisle", "Pasillo 1")),
+                blocked_aisles,
+            )["distance_m"]
+
+        if n <= 14:
+            # Held-Karp DP: exact minimum tour through every distinct physical row.
+            costs: Dict[tuple, float] = {}
+            parents: Dict[tuple, int] = {}
+            for i, key in enumerate(position_keys):
+                state = (1 << i, i)
+                costs[state] = leg_distance(origin, representatives[key])
+                parents[state] = -1
+
+            for mask in range(1, 1 << n):
+                for last in range(n):
+                    state = (mask, last)
+                    if not mask & (1 << last) or state not in costs:
+                        continue
+                    current_cost = costs[state]
+                    for nxt in range(n):
+                        if mask & (1 << nxt):
+                            continue
+                        next_mask = mask | (1 << nxt)
+                        next_state = (next_mask, nxt)
+                        candidate = current_cost + leg_distance(
+                            representatives[position_keys[last]],
+                            representatives[position_keys[nxt]],
+                        )
+                        if candidate < costs.get(next_state, float("inf")):
+                            costs[next_state] = candidate
+                            parents[next_state] = last
+
+            full_mask = (1 << n) - 1
+            best_last = min(
+                range(n),
+                key=lambda last: costs[(full_mask, last)] + leg_distance(
+                    representatives[position_keys[last]], origin
+                ),
+            )
+            route_indexes = []
+            mask = full_mask
+            last = best_last
+            while last != -1:
+                route_indexes.append(last)
+                previous = parents[(mask, last)]
+                mask ^= 1 << last
+                last = previous
+            route_indexes.reverse()
+            ordered_keys = [position_keys[i] for i in route_indexes]
+            self._last_optimization_metadata = {
+                "is_globally_optimal": True,
+                "method": "Búsqueda exacta Held–Karp sobre los pasillos",
+                "optimized_positions": n,
+            }
+        else:
+            # Scalable fallback: classic alternating S-Shape by lane.
+            aisle_numbers = sorted({key[0] for key in position_keys})
+            ordered_keys = []
+            for aisle_index, aisle_number in enumerate(aisle_numbers):
+                aisle_keys = [key for key in position_keys if key[0] == aisle_number]
+                aisle_keys.sort(key=lambda key: key[1], reverse=bool(aisle_index % 2))
+                ordered_keys.extend(aisle_keys)
+            self._last_optimization_metadata = {
+                "is_globally_optimal": False,
+                "method": "Heurística S-Shape (más de 14 puntos físicos)",
+                "optimized_positions": n,
+            }
+
+        optimized = []
+        for key in ordered_keys:
+            optimized.extend(buckets[key])
+        return optimized
+
+    def _physical_y_m(self, grid_y: int) -> float:
+        """Translate a rack-row/corridor Y index to physical metres."""
+        params = BLUEPRINT_PARAMS
+        y = int(grid_y)
+        if y == 0:
+            return 0.0
+        if y == params["top_corridor_grid_y"]:
+            return (
+                params["bottom_corridor_depth_m"]
+                + params["rows_per_aisle"] * params["rack_row_length_m"]
+                + params["top_corridor_depth_m"]
+            )
+        return params["bottom_corridor_depth_m"] + y * params["rack_row_length_m"]
 
     def _get_leg_path_and_distance(
         self,
@@ -557,61 +712,52 @@ class SmartPickingEngine:
         target_aisle: str,
         blocked_aisles: set
     ) -> Dict[str, Any]:
-        """
-        REQUIREMENT 2 & 3:
-        Calculates shortest realistic path restricted to aisles & cross-aisle corridors
-        (no diagonal cuts / 'modo vuelo') based on real blueprint parameters.
-        """
-        y_scale = BLUEPRINT_PARAMS["grid_y_unit_m"]        # 1.0 m / unit Y
-        x_scale = BLUEPRINT_PARAMS["grid_x_unit_m"]        # 0.8 m / unit X (2.4m per 3 units)
-        bottom_clearance = BLUEPRINT_PARAMS["bottom_corridor_depth_m"] # 5.0m
-        top_clearance = BLUEPRINT_PARAMS["top_corridor_depth_m"]    # 3.0m
+        """Return the shortest orthogonal path along the lateral lanes (never through rack blocks).
 
-        curr_blocked = curr_aisle in blocked_aisles
-        target_blocked = target_aisle in blocked_aisles
-        aisle_penalty = 15.0 if (curr_blocked or target_blocked) else 0.0
+        X distance between adjacent aisle centre-lines is 2.1 m of rack pair
+        plus 1.0 m of aisle. Y rack rows are 2.4 m apart. Corridor depths are
+        included in the physical Y coordinates, not added repeatedly as a
+        penalty on every transfer.
+        """
+        params = BLUEPRINT_PARAMS
+        curr_y_m = self._physical_y_m(curr_y)
+        target_y_m = self._physical_y_m(target_y)
+        top_y = params["top_corridor_grid_y"]
+        top_y_m = self._physical_y_m(top_y)
+        x_scale = params["grid_x_unit_m"]
 
+        # A blocked aisle cannot be used as a picking destination. Requests to
+        # blocked destinations are rejected before this function is called.
+        # Transverse travel on the perimeter corridors remains available.
         if curr_x == target_x:
-            # Same aisle movement
-            dist = (abs(target_y - curr_y) * y_scale) + aisle_penalty
             return {
-                "distance_m": dist,
-                "transits": []
+                "distance_m": abs(target_y_m - curr_y_m),
+                "transits": [],
+                "corridor": None,
             }
 
-        # Cross-aisle movement: Option A (Bottom Corridor y=0) vs Option B (Top Corridor y=16)
-        dist_bottom = (
-            (curr_y * y_scale)
-            + (abs(target_x - curr_x) * x_scale)
-            + (target_y * y_scale)
-            + bottom_clearance
-            + aisle_penalty
-        )
-
-        dist_top = (
-            ((16 - curr_y) * y_scale)
-            + (abs(target_x - curr_x) * x_scale)
-            + ((16 - target_y) * y_scale)
-            + top_clearance
-            + aisle_penalty
-        )
+        horizontal = abs(target_x - curr_x) * x_scale
+        dist_bottom = abs(curr_y_m) + horizontal + abs(target_y_m)
+        dist_top = abs(top_y_m - curr_y_m) + horizontal + abs(top_y_m - target_y_m)
 
         if dist_bottom <= dist_top:
             return {
                 "distance_m": dist_bottom,
+                "corridor": "inferior",
                 "transits": [
-                    {"x": curr_x, "y": 0, "label": f"Giro a Corredor Inferior de Conexión ({curr_aisle})"},
-                    {"x": target_x, "y": 0, "label": f"Tránsito Inferior e Ingreso a {target_aisle}"}
-                ]
+                    {"x": curr_x, "y": 0, "label": f"Salida del carril {curr_x // 3} al corredor inferior"},
+                    {"x": target_x, "y": 0, "label": f"Tránsito inferior e ingreso al carril {target_x // 3}"},
+                ],
             }
-        else:
-            return {
-                "distance_m": dist_top,
-                "transits": [
-                    {"x": curr_x, "y": 16, "label": f"Giro a Corredor Superior de Conexión ({curr_aisle})"},
-                    {"x": target_x, "y": 16, "label": f"Tránsito Superior e Ingreso a {target_aisle}"}
-                ]
-            }
+
+        return {
+            "distance_m": dist_top,
+            "corridor": "superior",
+            "transits": [
+                {"x": curr_x, "y": top_y, "label": f"Salida del carril {curr_x // 3} al corredor superior"},
+                {"x": target_x, "y": top_y, "label": f"Tránsito superior e ingreso al carril {target_x // 3}"},
+            ],
+        }
 
     def _calculate_route_distance(
         self,
@@ -624,7 +770,7 @@ class SmartPickingEngine:
         if not sequence:
             return 0.0
 
-        current_x, current_y = 2, 0  # Entrance / Despacho
+        current_x, current_y = 0, 0  # Entrance / Despacho (carril 0)
         current_aisle = "Pasillo 1"
         total_dist_m = 0.0
 
@@ -640,9 +786,9 @@ class SmartPickingEngine:
             total_dist_m += leg_info["distance_m"]
             current_x, current_y, current_aisle = target_x, target_y, target_aisle
 
-        # Return to exit point (2, 0)
+        # Return to exit point (0, 0)
         return_info = self._get_leg_path_and_distance(
-            current_x, current_y, 2, 0,
+            current_x, current_y, 0, 0,
             current_aisle, "Pasillo 1", blocked_aisles
         )
         total_dist_m += return_info["distance_m"]
@@ -661,14 +807,14 @@ class SmartPickingEngine:
         waypoints = [{
             "step": 0,
             "type": "START",
-            "x": 2,
+            "x": 0,
             "y": 0,
             "zone": "Zona Inferior de Entrada / Despacho",
             "audio_tag": "start",
             "label": "Punto de Inicio / Despacho"
         }]
 
-        current_x, current_y = 2, 0
+        current_x, current_y = 0, 0
         current_aisle = "Pasillo 1"
         pick_step_counter = 1
 
@@ -684,13 +830,11 @@ class SmartPickingEngine:
 
             # Insert intermediate corridor transit waypoints if cross-aisle movement
             for tr in leg_info["transits"]:
-                a_num = 1 if tr["x"] <= 3 else (2 if tr["x"] <= 6 else (3 if tr["x"] <= 9 else 4))
                 waypoints.append({
                     "type": "TRANSIT",
                     "x": tr["x"],
                     "y": tr["y"],
-                    "aisle_number": a_num,
-                    "aisle": f"Pasillo {a_num}",
+                    "lane": tr["x"] // 3,
                     "label": tr["label"]
                 })
 
@@ -722,6 +866,7 @@ class SmartPickingEngine:
                 "location": item["location_number"],
                 "aisle": target_aisle,
                 "aisle_number": item.get("aisle_number", 1),
+                "lane": target_x // 3,
                 "rack": item.get("rack", f"R{item['location_number']}"),
                 "quadrant": item.get("quadrant", "Q1"),
                 "color": color,
@@ -734,9 +879,9 @@ class SmartPickingEngine:
             pick_step_counter += 1
             current_x, current_y, current_aisle = target_x, target_y, target_aisle
 
-        # Return leg transits back to Entrance (2, 0)
+        # Return leg transits back to Entrance (0, 0)
         return_info = self._get_leg_path_and_distance(
-            current_x, current_y, 2, 0,
+            current_x, current_y, 0, 0,
             current_aisle, "Pasillo 1", blocked_aisles
         )
         for tr in return_info["transits"]:
@@ -750,7 +895,7 @@ class SmartPickingEngine:
         waypoints.append({
             "step": pick_step_counter,
             "type": "END",
-            "x": 2,
+            "x": 0,
             "y": 0,
             "zone": "Zona Inferior de Entrada / Despacho",
             "audio_tag": "end",

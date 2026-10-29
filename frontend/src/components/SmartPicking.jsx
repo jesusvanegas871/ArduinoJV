@@ -62,7 +62,7 @@ export default function SmartPicking() {
   // AGV Simulation & Telemetry State
   const [controlMode, setControlMode] = useState('auto'); // 'auto' | 'manual'
   const [agvState, setAgvState] = useState({
-    x: 2,
+    x: 0,
     y: 0,
     status: 'IDLE', // 'IDLE' | 'MOVING' | 'STOPPED_PICKING' | 'COMPLETED' | 'MANUAL' | 'EMERGENCY_STOP'
     mode: 'auto',
@@ -84,7 +84,7 @@ export default function SmartPicking() {
   // Initial setup: Fetch layout & default rack route
   useEffect(() => {
     fetchExampleLayout();
-    addLog('Sistema WMS Logística 2026 inicializado. Carro AGV preparado en Zona Inferior de Entrada/Despacho (x:2, y:0).', 'INFO');
+    addLog('Sistema WMS Logística 2026 inicializado. Carro AGV preparado en Zona Inferior de Entrada/Despacho (x:0, y:0).', 'INFO');
   }, []);
 
   const fetchExampleLayout = async () => {
@@ -125,7 +125,7 @@ export default function SmartPicking() {
         setRouteResult(data);
         addLog(`Ruta de racks optimizada calculada. Total paradas: ${data.total_stops}. Recorrido total: ${data.distance_comparison.optimized_sequence_distance_m}m.`, 'SUCCESS');
       } else {
-        const msg = data.message || data.detail?.message || 'Error al calcular la ruta manual.';
+        const msg = data.message || data.detail?.errors?.join(' ') || data.detail?.message || data.errors?.join(' ') || 'Error al calcular la ruta manual.';
         setErrorMsg(msg);
         addLog(`Error al calcular ruta: ${msg}`, 'ERROR');
       }
@@ -206,13 +206,13 @@ export default function SmartPicking() {
 
     setIsSimulating(true);
     if (soundEnabled) SoundEffects.playStart();
-    addLog('🚀 INICIO DE RECORRIDO INTERACTIVO AGV. Partiendo desde Zona Inferior de Entrada / Despacho (x:2, y:0).', 'ACTION');
+    addLog('🚀 INICIO DE RECORRIDO INTERACTIVO AGV. Partiendo desde Zona Inferior de Entrada / Despacho (x:0, y:0).', 'ACTION');
 
     const runWaypointStep = (idx) => {
       if (idx >= waypoints.length) {
         setAgvState((prev) => ({
           ...prev,
-          x: 2,
+          x: 0,
           y: 0,
           status: 'COMPLETED',
           currentWaypointIdx: waypoints.length - 1
@@ -272,7 +272,7 @@ export default function SmartPicking() {
   const handleManualMove = (dx, dy, dirName) => {
     if (controlMode !== 'manual') return;
 
-    const newX = Math.max(0, Math.min(14, agvState.x + dx));
+    const newX = Math.max(0, Math.min(12, agvState.x + dx));
     const newY = Math.max(0, Math.min(15, agvState.y + dy));
 
     setAgvState((prev) => ({
@@ -304,7 +304,7 @@ export default function SmartPicking() {
     if (simulationTimerRef.current) clearTimeout(simulationTimerRef.current);
     setIsSimulating(false);
     setAgvState({
-      x: 2,
+      x: 0,
       y: 0,
       status: 'IDLE',
       mode: controlMode,
@@ -313,7 +313,7 @@ export default function SmartPicking() {
       currentWaypointIdx: 0,
       location: null
     });
-    addLog('AGV reiniciado a posición por defecto: Zona Inferior de Entrada/Despacho (x:2, y:0). Batería 100%.', 'INFO');
+    addLog('AGV reiniciado a posición por defecto: Zona Inferior de Entrada/Despacho (x:0, y:0). Batería 100%.', 'INFO');
   };
 
   // Save Custom Layout
@@ -749,9 +749,22 @@ export default function SmartPicking() {
                 Lista de Racks Asignados para Recorrido ({routeResult.route_list.length} Paradas):
               </span>
               {routeResult.distance_comparison && (
-                <span className="text-xs font-extrabold text-emerald-400">
-                  Recorrido Optimizado S-Shape: {routeResult.distance_comparison.optimized_sequence_distance_m} metros
-                </span>
+                <div className="text-right space-y-1">
+                  <div className={`text-xs font-extrabold ${routeResult.distance_comparison.is_globally_optimal ? 'text-emerald-400' : 'text-amber-300'}`}>
+                    {routeResult.distance_comparison.is_globally_optimal
+                      ? 'Ruta mínima verificada (búsqueda exacta)'
+                      : 'Ruta estimada (heurística; no garantiza el mínimo global)'}:
+                    {' '}{routeResult.distance_comparison.optimized_sequence_distance_m} m
+                  </div>
+                  <div className="text-[10px] font-medium text-slate-400">
+                    Secuencia inicial: {routeResult.distance_comparison.original_sequence_distance_m} m ·{' '}
+                    Ahorro: {routeResult.distance_comparison.distance_saved_m} m
+                  </div>
+                  <div className="text-[10px] font-medium text-slate-400">
+                    Pasillo: 1,0 m · bloque de 2 cubos: 2,1 m · largo por cubo: 2,4 m ·{' '}
+                    {routeResult.distance_comparison.optimization_method || 'Optimización de recorrido'}
+                  </div>
+                </div>
               )}
             </div>
 
