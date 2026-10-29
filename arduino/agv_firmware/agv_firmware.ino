@@ -16,11 +16,11 @@ const long SERIAL_BAUD = 115200;
 
 // Motor Driver Pins (L298N / TB6612 compatible)
 const int PIN_ENA = 5;   // PWM Motor Izquierdo
-const int PIN_IN1 = 2;   // Dir 1 Izquierdo
-const int PIN_IN2 = 3;   // Dir 2 Izquierdo
+const int PIN_IN1 = 8;   // Dir 1 Izquierdo
+const int PIN_IN2 = 7;   // Dir 2 Izquierdo
 const int PIN_ENB = 6;   // PWM Motor Derecho
-const int PIN_IN3 = 4;   // Dir 1 Derecho
-const int PIN_IN4 = 7;   // Dir 2 Derecho
+const int PIN_IN3 = 10;   // Dir 1 Derecho
+const int PIN_IN4 = 9;   // Dir 2 Derecho
 
 // 5 Sensores IR de Línea (de Izquierda a Derecha: S1, S2, S3, S4, S5)
 const int PIN_IR_1 = A0; // Extremo Izquierdo
@@ -32,7 +32,7 @@ const int PIN_IR_5 = A4; // Extremo Derecho
 // Umbral para sensores analógicos (si se leen en analógico; si se usan digitales, HIGH = negro)
 const int IR_THRESHOLD = 500;
 
-// Buzzer Activo
+// Buzzer activo o pasivo
 const int PIN_BUZZER = 13;
 
 // Parámetros de Control y Velocidad
@@ -83,6 +83,8 @@ float g_lastError = 0.0;
 // ==========================================
 // FUNCIONES AUXILIARES DE HARDWARE
 // ==========================================
+
+void stopMotors();
 
 // Configuración de pines
 void setupHardware() {
@@ -143,14 +145,14 @@ void stopMotors() {
 
 // Control del Buzzer
 void startBeep(unsigned long durationMs) {
-  digitalWrite(PIN_BUZZER, HIGH);
+  tone(PIN_BUZZER, 2000);
   g_beepEndTime = millis() + durationMs;
   g_isBeeping = true;
 }
 
 void updateBuzzer() {
   if (g_isBeeping && millis() >= g_beepEndTime) {
-    digitalWrite(PIN_BUZZER, LOW);
+    noTone(PIN_BUZZER);
     g_isBeeping = false;
   }
 }

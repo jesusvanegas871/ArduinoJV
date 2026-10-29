@@ -77,6 +77,7 @@ export default function SmartPicking() {
   // AGV Real Hardware Connection State (USB Serial Arduino)
   const [agvPorts, setAgvPorts] = useState([]);
   const [selectedPort, setSelectedPort] = useState('');
+  const [selectedBaudrate, setSelectedBaudrate] = useState(115200);
   const [agvHardwareStatus, setAgvHardwareStatus] = useState({
     connected: false,
     port: null,
@@ -86,6 +87,8 @@ export default function SmartPicking() {
   const [agvSpeed, setAgvSpeed] = useState(180);
   const [hardwareBusy, setHardwareBusy] = useState(false);
   const [hardwareMsg, setHardwareMsg] = useState(null);
+  const [hardwareError, setHardwareError] = useState(false);
+  const manualControlIntervalRef = useRef(null);
 
   // Helper for adding logs with timestamp
   const addLog = (message, type = 'INFO') => {
@@ -151,11 +154,12 @@ export default function SmartPicking() {
     }
     setHardwareBusy(true);
     setHardwareMsg(null);
+    setHardwareError(false);
     try {
       const res = await fetch(`${API_BASE_URL}/api/agv/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port: selectedPort, baudrate: 115200 })
+        body: JSON.stringify({ port: selectedPort, baudrate: selectedBaudrate })
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -165,10 +169,12 @@ export default function SmartPicking() {
       } else {
         const err = data.detail || data.message || 'Error al conectar puerto serie.';
         setHardwareMsg(err);
+        setHardwareError(true);
         addLog(`Error de conexión serial: ${err}`, 'ERROR');
       }
     } catch (err) {
       setHardwareMsg('Error de conexión con el backend.');
+      setHardwareError(true);
     } finally {
       setHardwareBusy(false);
     }
@@ -200,12 +206,49 @@ export default function SmartPicking() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        setHardwareMsg(null);
+        setHardwareError(false);
         addLog(`🎮 Comando Manual AGV Real: M:${command} (Velocidad: ${agvSpeed})`, 'ACTION');
         fetchAgvHardwareStatus();
+        return true;
       }
+      setHardwareMsg(data.detail || data.message || `El Arduino rechazó el comando M:${command}.`);
+      setHardwareError(true);
+      addLog(`Error en comando manual: ${data.detail || data.message || res.statusText}`, 'ERROR');
+      return false;
     } catch (err) {
       console.error('Error al enviar comando manual:', err);
+      setHardwareMsg('Error de conexión con el backend al enviar el comando manual.');
+      setHardwareError(true);
+      return false;
     }
+  };
+
+  const startHardwareManualControl = (command) => {
+    if (!agvHardwareStatus.connected) return;
+    if (manualControlIntervalRef.current) clearInterval(manualControlIntervalRef.current);
+    manualControlIntervalRef.current = setInterval(() => {
+      handleSendManualCommand(command).then((success) => {
+        if (!success && manualControlIntervalRef.current) {
+          clearInterval(manualControlIntervalRef.current);
+          manualControlIntervalRef.current = null;
+        }
+      });
+    }, 200);
+    handleSendManualCommand(command).then((success) => {
+      if (!success && manualControlIntervalRef.current) {
+        clearInterval(manualControlIntervalRef.current);
+        manualControlIntervalRef.current = null;
+      }
+    });
+  };
+
+  const stopHardwareManualControl = () => {
+    if (manualControlIntervalRef.current) {
+      clearInterval(manualControlIntervalRef.current);
+      manualControlIntervalRef.current = null;
+    }
+    if (agvHardwareStatus.connected) handleSendManualCommand('S');
   };
 
   const handleBeepAgv = async (duration_ms = 300) => {
@@ -217,11 +260,19 @@ export default function SmartPicking() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        if (soundEnabled) SoundEffects.playArrivalYellow();
+        setHardwareMsg(null);
+        setHardwareError(false);
         addLog(`🔊 Pitido activado en AGV Real (${duration_ms} ms).`, 'SUCCESS');
+      } else {
+        const error = data.detail || data.message || 'El Arduino rechazó el comando del buzzer.';
+        setHardwareMsg(error);
+        setHardwareError(true);
+        addLog(`Error al activar buzzer: ${error}`, 'ERROR');
       }
     } catch (err) {
       console.error('Error al emitir pitido:', err);
+      setHardwareMsg('Error de conexión con el backend al activar el buzzer.');
+      setHardwareError(true);
     }
   };
 
@@ -299,7 +350,7 @@ export default function SmartPicking() {
 
       if (cmd) {
         isKeyPressedRef.current = true;
-        handleSendManualCommand(cmd);
+        startHardwareManualControl(cmd);
       }
     };
 
@@ -310,7 +361,7 @@ export default function SmartPicking() {
       const keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D'];
       if (keys.includes(e.key)) {
         isKeyPressedRef.current = false;
-        handleSendManualCommand('S');
+        stopHardwareManualControl();
       }
     };
 
@@ -321,6 +372,10 @@ export default function SmartPicking() {
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, [agvHardwareStatus.connected, agvSpeed]);
+
+  useEffect(() => () => {
+    if (manualControlIntervalRef.current) clearInterval(manualControlIntervalRef.current);
+  }, []);
 
   // Fetch or calculate route when rack sequence or blocked aisles change
   const handleCalculateRoute = async (sequenceToUse = rackSequence) => {
@@ -665,7 +720,7 @@ export default function SmartPicking() {
         </div>
 
         {/* Port Selector and Connect Row */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
           <div className="md:col-span-2 space-y-1">
             <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
               Puerto Serie (USB Arduino)
@@ -696,6 +751,22 @@ export default function SmartPicking() {
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+              Baudios
+            </label>
+            <select
+              value={selectedBaudrate}
+              onChange={(e) => setSelectedBaudrate(Number(e.target.value))}
+              disabled={agvHardwareStatus.connected}
+              className="w-full bg-slate-900 border border-slate-700 text-xs font-bold text-white rounded-xl p-2.5 outline-none focus:border-emerald-500 disabled:opacity-50"
+              title="Debe coincidir con Serial.begin(...) del firmware cargado en el Arduino"
+            >
+              <option value={115200}>115200</option>
+              <option value={9600}>9600</option>
+            </select>
           </div>
 
           <div>
@@ -731,8 +802,12 @@ export default function SmartPicking() {
 
         {/* Feedback message banner */}
         {hardwareMsg && (
-          <div className="p-3 bg-slate-900 border border-slate-700 text-xs font-bold text-emerald-300 rounded-xl flex items-center gap-2">
-            <Zap className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <div className={`p-3 bg-slate-900 border text-xs font-bold rounded-xl flex items-center gap-2 ${
+            hardwareError
+              ? 'border-rose-500/50 text-rose-300'
+              : 'border-slate-700 text-emerald-300'
+          }`}>
+            <Zap className={`w-4 h-4 flex-shrink-0 ${hardwareError ? 'text-rose-400' : 'text-emerald-400'}`} />
             <span>{hardwareMsg}</span>
           </div>
         )}
@@ -771,8 +846,13 @@ export default function SmartPicking() {
               <div className="grid grid-cols-3 gap-1.5 w-36 h-36 bg-slate-950 p-2 rounded-2xl border border-slate-800">
                 <div />
                 <button
-                  onMouseDown={() => handleSendManualCommand('F')}
-                  onMouseUp={() => handleSendManualCommand('S')}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    startHardwareManualControl('F');
+                  }}
+                  onPointerUp={stopHardwareManualControl}
+                  onPointerLeave={stopHardwareManualControl}
+                  onPointerCancel={stopHardwareManualControl}
                   className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl flex items-center justify-center font-bold shadow-md"
                   title="Adelante (F)"
                 >
@@ -781,23 +861,33 @@ export default function SmartPicking() {
                 <div />
 
                 <button
-                  onMouseDown={() => handleSendManualCommand('L')}
-                  onMouseUp={() => handleSendManualCommand('S')}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    startHardwareManualControl('L');
+                  }}
+                  onPointerUp={stopHardwareManualControl}
+                  onPointerLeave={stopHardwareManualControl}
+                  onPointerCancel={stopHardwareManualControl}
                   className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl flex items-center justify-center font-bold shadow-md"
                   title="Izquierda (L)"
                 >
                   <ArrowLeft className="w-5 h-5" />
                 </button>
                 <button
-                  onClick={() => handleSendManualCommand('S')}
+                  onClick={stopHardwareManualControl}
                   className="bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase shadow-md"
                   title="Parar (S)"
                 >
                   STOP
                 </button>
                 <button
-                  onMouseDown={() => handleSendManualCommand('R')}
-                  onMouseUp={() => handleSendManualCommand('S')}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    startHardwareManualControl('R');
+                  }}
+                  onPointerUp={stopHardwareManualControl}
+                  onPointerLeave={stopHardwareManualControl}
+                  onPointerCancel={stopHardwareManualControl}
                   className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl flex items-center justify-center font-bold shadow-md"
                   title="Derecha (R)"
                 >
@@ -806,8 +896,13 @@ export default function SmartPicking() {
 
                 <div />
                 <button
-                  onMouseDown={() => handleSendManualCommand('B')}
-                  onMouseUp={() => handleSendManualCommand('S')}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    startHardwareManualControl('B');
+                  }}
+                  onPointerUp={stopHardwareManualControl}
+                  onPointerLeave={stopHardwareManualControl}
+                  onPointerCancel={stopHardwareManualControl}
                   className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl flex items-center justify-center font-bold shadow-md"
                   title="Atrás (B)"
                 >

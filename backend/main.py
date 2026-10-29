@@ -300,12 +300,8 @@ def manual_agv_control(req: AGVManualRequestModel):
     if cmd not in ("F", "B", "L", "R", "S"):
         raise HTTPException(status_code=400, detail="Comando manual no válido. Debe ser uno de: F, B, L, R, S")
 
-    if req.speed is not None:
-        spd_res = agv_serial.send_command(f"SPD:{req.speed}")
-        if not spd_res.get("success"):
-            raise HTTPException(status_code=400, detail=spd_res.get("message"))
-
-    res = agv_serial.send_command(f"M:{cmd}")
+    commands = [f"SPD:{req.speed}", f"M:{cmd}"] if req.speed is not None else [f"M:{cmd}"]
+    res = agv_serial.send_commands(commands)
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("message"))
     return res

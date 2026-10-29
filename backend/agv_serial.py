@@ -1,5 +1,6 @@
 import threading
 import time
+import queue
 from typing import List, Dict, Any, Optional
 
 try:
@@ -94,6 +95,7 @@ class AGVSerialController:
         self._lock = threading.Lock()
         self._read_thread: Optional[threading.Thread] = None
         self._stop_thread = False
+        self._responses: queue.Queue[str] = queue.Queue()
 
     def get_available_ports(self) -> List[Dict[str, str]]:
         """Lista los puertos serie disponibles en el sistema operativo."""
@@ -170,6 +172,8 @@ class AGVSerialController:
                         self.last_event = line
                         if line == "EVT:ROUTE_DONE":
                             self.current_mode = "IDLE"
+                    else:
+                        self._responses.put(line)
             except Exception:
                 break
             time.sleep(0.05)
@@ -185,6 +189,11 @@ class AGVSerialController:
         self.is_connected = False
         self.is_mock = False
         self.current_mode = "IDLE"
+        while not self._responses.empty():
+            try:
+                self._responses.get_nowait()
+            except queue.Empty:
+                break
 
     def disconnect(self) -> Dict[str, Any]:
         """Desconecta el puerto serie."""
@@ -194,41 +203,54 @@ class AGVSerialController:
 
     def send_command(self, cmd: str) -> Dict[str, Any]:
         """Envía una línea de comando terminada en '\\n' al Arduino."""
+        return self.send_commands([cmd])
+
+    def send_commands(self, commands: List[str]) -> Dict[str, Any]:
+        """Envía comandos en orden y recoge sus respuestas sin competir con el lector serial."""
         if not self.is_connected:
             return {"success": False, "message": "El AGV no está conectado por puerto serial."}
 
-        cmd_clean = cmd.strip()
-        raw_cmd = f"{cmd_clean}\n"
+        commands_clean = [cmd.strip() for cmd in commands]
 
         if self.is_mock:
-            # Simulación de respuesta OK
-            if cmd_clean.startswith("M:"):
-                self.current_mode = "IDLE" if cmd_clean == "M:S" else "MANUAL"
-            elif cmd_clean.startswith("ROUTE:"):
-                self.current_mode = "ROUTE"
-            elif cmd_clean == "STOP":
-                self.current_mode = "IDLE"
-            return {"success": True, "response": "OK", "command_sent": cmd_clean}
-
-        with self._lock:
-            try:
-                self.serial_port.flushInput()
-                self.serial_port.write(raw_cmd.encode('utf-8'))
-                response = self.serial_port.readline().decode('utf-8', errors='ignore').strip()
-                if not response:
-                    response = "OK"  # Fallback si no hay eco inmediato
-
-                if response.startswith("ERR:"):
-                    return {"success": False, "message": f"Arduino reportó error: {response}", "response": response}
-
+            for cmd_clean in commands_clean:
                 if cmd_clean.startswith("M:"):
                     self.current_mode = "IDLE" if cmd_clean == "M:S" else "MANUAL"
                 elif cmd_clean.startswith("ROUTE:"):
                     self.current_mode = "ROUTE"
                 elif cmd_clean == "STOP":
                     self.current_mode = "IDLE"
+            return {"success": True, "response": "OK", "command_sent": commands_clean[-1]}
 
-                return {"success": True, "response": response, "command_sent": cmd_clean}
+        with self._lock:
+            try:
+                responses = []
+                for cmd_clean in commands_clean:
+                    self.serial_port.write(f"{cmd_clean}\n".encode('utf-8'))
+                    try:
+                        response = self._responses.get(timeout=2.0)
+                    except queue.Empty:
+                        return {
+                            "success": False,
+                            "message": f"El Arduino no respondió al comando '{cmd_clean}'. Verifica el firmware y la conexión serial."
+                        }
+
+                    if response.startswith("ERR:"):
+                        return {"success": False, "message": f"Arduino reportó error: {response}", "response": response}
+                    responses.append(response)
+
+                    if cmd_clean.startswith("M:"):
+                        self.current_mode = "IDLE" if cmd_clean == "M:S" else "MANUAL"
+                    elif cmd_clean.startswith("ROUTE:"):
+                        self.current_mode = "ROUTE"
+                    elif cmd_clean == "STOP":
+                        self.current_mode = "IDLE"
+
+                return {
+                    "success": True,
+                    "response": responses[-1] if responses else "OK",
+                    "command_sent": commands_clean[-1] if commands_clean else None
+                }
             except Exception as e:
                 self._disconnect_internal()
                 return {"success": False, "message": f"Error de comunicación durante el envío serial: {str(e)}"}
