@@ -8,11 +8,12 @@ from backend.excel_handler import create_sample_excel_if_not_exists, read_invent
 from backend.cycle_counting import CycleCountEngine
 from backend.routing import DistributionRoutingEngine
 from backend.picking import SmartPickingEngine
+from backend.agv_serial import agv_serial, waypoints_to_commands
 
 app = FastAPI(
     title="WMS Cycle Counting & Logistics Optimization API - Hackatón Logística 2026",
-    description="API para gestión de inventario, conteo cíclico aleatorio y módulo de optimización logística (rutas y picking inteligente).",
-    version="2.0.0"
+    description="API para gestión de inventario, conteo cíclico aleatorio y módulo de optimización logística (rutas, picking inteligente y control serial AGV real).",
+    version="2.1.0"
 )
 
 # Enable CORS for React frontend
@@ -62,11 +63,29 @@ class ExportCSVRequestModel(BaseModel):
     dispatch_list: List[Dict[str, Any]]
 
 
+class AGVConnectRequestModel(BaseModel):
+    port: str
+    baudrate: int = 115200
+
+
+class AGVManualRequestModel(BaseModel):
+    command: str = Field(..., description="Comando manual: F, B, L, R, S")
+    speed: Optional[int] = Field(None, description="Velocidad opcional entre 0 y 255")
+
+
+class AGVBeepRequestModel(BaseModel):
+    duration_ms: int = Field(200, description="Duración del pitido en milisegundos")
+
+
+class AGVRouteStartRequestModel(BaseModel):
+    route_waypoints: List[Dict[str, Any]]
+
+
 # --- EXISTING INVENTORY & CYCLE COUNTING ENDPOINTS ---
 @app.get("/")
 def read_root():
     return {
-        "system": "WMS Logística 2026 - Módulo de Optimización",
+        "system": "WMS Logística 2026 - Módulo de Optimización y Control AGV",
         "status": "Online",
         "total_references": len(engine.references)
     }
@@ -237,3 +256,110 @@ def export_picking_csv(req: ExportCSVRequestModel):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=lista_de_despacho_ordenada.csv"}
     )
+
+
+# --- CONTROL SERIAL AGV REAL ENDPOINTS ---
+@app.get("/api/agv/ports")
+def get_agv_ports():
+    """Retorna la lista de puertos serie disponibles en el sistema backend."""
+    return {
+        "success": True,
+        "ports": agv_serial.get_available_ports()
+    }
+
+
+@app.post("/api/agv/connect")
+def connect_agv(req: AGVConnectRequestModel):
+    """Conecta con el puerto serie especificado para controlar el AGV real o simulado."""
+    res = agv_serial.connect(port=req.port, baudrate=req.baudrate)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
+
+
+@app.post("/api/agv/disconnect")
+def disconnect_agv():
+    """Desconecta el puerto serie del AGV."""
+    res = agv_serial.disconnect()
+    return res
+
+
+@app.get("/api/agv/status")
+def get_agv_status():
+    """Devuelve el estado de conexión, puerto activo, modo y último evento del AGV."""
+    return {
+        "success": True,
+        "status": agv_serial.get_status()
+    }
+
+
+@app.post("/api/agv/manual")
+def manual_agv_control(req: AGVManualRequestModel):
+    """Envía un comando de control manual (F, B, L, R, S) y opcionalmente ajusta la velocidad."""
+    cmd = req.command.strip().upper()
+    if cmd not in ("F", "B", "L", "R", "S"):
+        raise HTTPException(status_code=400, detail="Comando manual no válido. Debe ser uno de: F, B, L, R, S")
+
+    if req.speed is not None:
+        spd_res = agv_serial.send_command(f"SPD:{req.speed}")
+        if not spd_res.get("success"):
+            raise HTTPException(status_code=400, detail=spd_res.get("message"))
+
+    res = agv_serial.send_command(f"M:{cmd}")
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
+
+
+@app.post("/api/agv/beep")
+def beep_agv(req: AGVBeepRequestModel):
+    """Activa el buzzer del AGV por la duración especificada en ms."""
+    res = agv_serial.send_command(f"BEEP:{req.duration_ms}")
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
+
+
+@app.post("/api/agv/route/start")
+def start_agv_route(req: AGVRouteStartRequestModel):
+    """
+    Traduce los waypoints de ruta calculados a comandos de paso F/L/R/U/P,
+    los envía al Arduino y envía el comando GO para iniciar el recorrido.
+    """
+    commands = waypoints_to_commands(req.route_waypoints)
+    if not commands:
+        raise HTTPException(status_code=400, detail="La lista de waypoints proporcionada no genera comandos válidos.")
+
+    steps_str = ",".join(commands)
+    route_cmd_res = agv_serial.send_command(f"ROUTE:{steps_str}")
+    if not route_cmd_res.get("success"):
+        raise HTTPException(status_code=400, detail=f"Error al enviar la ruta al Arduino: {route_cmd_res.get('message')}")
+
+    go_res = agv_serial.send_command("GO")
+    if not go_res.get("success"):
+        raise HTTPException(status_code=400, detail=f"Error al iniciar el recorrido en el Arduino: {go_res.get('message')}")
+
+    return {
+        "success": True,
+        "message": f"Ruta enviada correctamente al AGV. Total comandos: {len(commands)}.",
+        "commands": commands,
+        "raw_route_command": f"ROUTE:{steps_str}"
+    }
+
+
+@app.post("/api/agv/route/continue")
+def continue_agv_route():
+    """Envía el comando CONTINUE para reanudar el recorrido tras una parada de PICK."""
+    res = agv_serial.send_command("CONTINUE")
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
+
+
+@app.post("/api/agv/route/stop")
+def stop_agv_route():
+    """Envía el comando STOP para abortar inmediatamente el recorrido del AGV."""
+    res = agv_serial.send_command("STOP")
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
