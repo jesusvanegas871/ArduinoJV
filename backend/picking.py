@@ -684,10 +684,13 @@ class SmartPickingEngine:
 
             # Insert intermediate corridor transit waypoints if cross-aisle movement
             for tr in leg_info["transits"]:
+                a_num = 1 if tr["x"] <= 3 else (2 if tr["x"] <= 6 else (3 if tr["x"] <= 9 else 4))
                 waypoints.append({
                     "type": "TRANSIT",
                     "x": tr["x"],
                     "y": tr["y"],
+                    "aisle_number": a_num,
+                    "aisle": f"Pasillo {a_num}",
                     "label": tr["label"]
                 })
 
@@ -718,6 +721,7 @@ class SmartPickingEngine:
                 "sku": sku_val,
                 "location": item["location_number"],
                 "aisle": target_aisle,
+                "aisle_number": item.get("aisle_number", 1),
                 "rack": item.get("rack", f"R{item['location_number']}"),
                 "quadrant": item.get("quadrant", "Q1"),
                 "color": color,
